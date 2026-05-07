@@ -54,8 +54,14 @@ class ModelConfig:
     saturation_type: str = "hill"         # hill | logistic | michaelis_menten
     adstock_max_lag: int = 13
 
-    # Cross-channel halo pairs  [(channel_a, channel_b), ...]
+    # Channel-level halo pairs  [(channel_a, channel_b), ...]
     halo_pairs: list[tuple[str, str]] = field(default_factory=list)
+
+    # Campaign-level halo pairs  [(campaign_a, campaign_b), ...]  cross-channel only
+    campaign_halo_pairs: list[tuple[str, str]] = field(default_factory=list)
+
+    # Minimum total raw spend for a campaign to be eligible for halo modelling
+    min_halo_spend: float = 0.0
 
     # Hierarchical campaign model
     include_campaign_hierarchy: bool = False
@@ -147,12 +153,37 @@ class BayesianMMM:
         cfg = self.config
         spend_train, target_train, control_train = dataset.train_data()
 
+        # Resolve halo pairs before entering the model context
+        ch_halo_idx = self._resolve_halo_pairs(cfg.halo_pairs, dataset.channel_names)
+        camp_halo_idx = self._resolve_campaign_halo_pairs(
+            cfg.campaign_halo_pairs,
+            dataset.campaign_names or [],
+            dataset.campaign_channels or [],
+            dataset.campaign_spend_matrix,
+            cfg.min_halo_spend,
+        )
+
+        has_campaign_halo = bool(camp_halo_idx) and dataset.campaign_spend_matrix is not None
+
+        # Campaign → parent channel index mapping (for borrowing adstock decay)
+        camp_to_ch_idx: dict[int, int] = {}
+        if has_campaign_halo and dataset.campaign_names and dataset.campaign_channels:
+            ch_name_to_idx = {n: i for i, n in enumerate(dataset.channel_names)}
+            for ci, (camp_name, ch_name) in enumerate(
+                zip(dataset.campaign_names, dataset.campaign_channels)
+            ):
+                camp_to_ch_idx[ci] = ch_name_to_idx.get(ch_name, 0)
+
         with pm.Model() as model:
             # ---- Data containers ----------------------------------------
             spend_data = pm.Data("spend", spend_train)
             target_obs = pm.Data("target_obs", target_train)
             if control_train.shape[1] > 0:
                 control_data = pm.Data("controls", control_train)
+
+            if has_campaign_halo:
+                camp_spend_train = dataset.campaign_spend_matrix[dataset.train_mask]
+                campaign_spend_data = pm.Data("campaign_spend", camp_spend_train)
 
             n_channels = dataset.n_channels
             n_controls = dataset.n_controls
@@ -199,11 +230,16 @@ class BayesianMMM:
             # ---- Observation noise --------------------------------------
             sigma = pm.HalfNormal("sigma", sigma=0.5)
 
-            # ---- Halo effect priors -------------------------------------
-            halo_pairs_idx = self._resolve_halo_pairs(cfg.halo_pairs, dataset.channel_names)
-            if halo_pairs_idx:
-                n_halo = len(halo_pairs_idx)
-                delta_halo = pm.HalfNormal("delta_halo", sigma=0.3, shape=n_halo)
+            # ---- Halo effect priors (channel-level) ---------------------
+            if ch_halo_idx:
+                delta_halo = pm.HalfNormal("delta_halo", sigma=0.3, shape=len(ch_halo_idx))
+
+            # ---- Halo effect priors (campaign-level) --------------------
+            if has_campaign_halo and camp_halo_idx:
+                # Tighter prior — campaign interactions are smaller in magnitude
+                delta_halo_campaign = pm.HalfNormal(
+                    "delta_halo_campaign", sigma=0.2, shape=len(camp_halo_idx)
+                )
 
             # ---- Media transformations (loop over channels) -------------
             channel_contributions = []
@@ -246,11 +282,46 @@ class BayesianMMM:
             contrib_stack = pt.stack(channel_contributions, axis=1)
             media_total = contrib_stack.sum(axis=1)
 
-            # ---- Halo effects -------------------------------------------
+            # ---- Campaign-level adstock (for halo terms only) ----------
+            campaign_adstocked: dict[int, object] = {}
+            if has_campaign_halo:
+                # Collect unique campaign indices needed for halo pairs
+                needed_camp_idx = set()
+                for ca, cb in camp_halo_idx:
+                    needed_camp_idx.add(ca)
+                    needed_camp_idx.add(cb)
+                for ci in needed_camp_idx:
+                    x_c_raw = campaign_spend_data[:, ci]
+                    x_c = x_c_raw - x_c_raw.min()
+                    parent_ch = camp_to_ch_idx.get(ci, 0)
+                    if cfg.adstock_type == "geometric":
+                        x_ad = geometric_adstock_pt(x_c, decay[parent_ch], cfg.adstock_max_lag)
+                    elif cfg.adstock_type == "weibull_pdf":
+                        x_ad = weibull_adstock_pt(
+                            x_c, wb_shape[parent_ch], wb_scale[parent_ch],
+                            cfg.adstock_max_lag, "pdf"
+                        )
+                    else:
+                        x_ad = weibull_adstock_pt(
+                            x_c, wb_shape[parent_ch], wb_scale[parent_ch],
+                            cfg.adstock_max_lag, "cdf"
+                        )
+                    campaign_adstocked[ci] = pt.clip(x_ad, 0, np.inf)
+
+            # ---- Halo effects (channel-level) ---------------------------
             halo_total = pt.zeros(spend_data.shape[0])
-            for hi, (ca, cb) in enumerate(halo_pairs_idx):
+            for hi, (ca, cb) in enumerate(ch_halo_idx):
                 halo_term = delta_halo[hi] * adstocked_channels[ca] * adstocked_channels[cb]
                 halo_total = halo_total + halo_term
+
+            # ---- Halo effects (campaign-level) --------------------------
+            if has_campaign_halo and camp_halo_idx:
+                for hi, (ca, cb) in enumerate(camp_halo_idx):
+                    halo_total = halo_total + (
+                        delta_halo_campaign[hi]
+                        * campaign_adstocked[ca]
+                        * campaign_adstocked[cb]
+                    )
 
             # ---- Control regressors -------------------------------------
             ctrl_total = pt.zeros(spend_data.shape[0])
@@ -570,4 +641,61 @@ class BayesianMMM:
                 warnings.warn(
                     f"Halo pair ({ca}, {cb}) — one or both channels not found. Skipping."
                 )
+        return resolved
+
+    @staticmethod
+    def _resolve_campaign_halo_pairs(
+        campaign_halo_pairs: list[tuple[str, str]],
+        campaign_names: list[str],
+        campaign_channels: list[str],
+        campaign_spend_matrix: Optional[np.ndarray],
+        min_halo_spend: float = 0.0,
+    ) -> list[tuple[int, int]]:
+        """Validate and convert campaign-name halo pairs to index pairs.
+
+        Applies three filters:
+          1. Both campaigns must exist in campaign_names.
+          2. Campaigns must belong to different channels (cross-channel only).
+          3. Both campaigns must meet the min_halo_spend threshold.
+        """
+        if not campaign_names:
+            return []
+
+        name_to_idx = {n: i for i, n in enumerate(campaign_names)}
+        ch_lookup = dict(zip(campaign_names, campaign_channels))
+
+        # Total spend per campaign for threshold filtering
+        total_spend: dict[int, float] = {}
+        if campaign_spend_matrix is not None:
+            for i in range(campaign_spend_matrix.shape[1]):
+                total_spend[i] = float(campaign_spend_matrix[:, i].sum())
+
+        resolved = []
+        for ca, cb in campaign_halo_pairs:
+            if ca not in name_to_idx or cb not in name_to_idx:
+                warnings.warn(
+                    f"Campaign halo pair ({ca}, {cb}) — one or both campaigns not found. Skipping."
+                )
+                continue
+            ia, ib = name_to_idx[ca], name_to_idx[cb]
+
+            if ch_lookup.get(ca) == ch_lookup.get(cb):
+                warnings.warn(
+                    f"Campaign halo pair ({ca}, {cb}) are in the same channel "
+                    f"({ch_lookup.get(ca)}). Skipping — within-channel campaigns "
+                    f"share a channel coefficient."
+                )
+                continue
+
+            if min_halo_spend > 0:
+                spend_a = total_spend.get(ia, 0.0)
+                spend_b = total_spend.get(ib, 0.0)
+                if spend_a < min_halo_spend or spend_b < min_halo_spend:
+                    warnings.warn(
+                        f"Campaign halo pair ({ca}, {cb}) — one or both campaigns "
+                        f"have total spend below min_halo_spend={min_halo_spend:.0f}. Skipping."
+                    )
+                    continue
+
+            resolved.append((ia, ib))
         return resolved

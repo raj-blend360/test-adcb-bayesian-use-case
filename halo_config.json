@@ -1,0 +1,16 @@
+{
+  "channel_halo_pairs": [
+    {"channel_a": "TV", "channel_b": "Digital"}
+  ],
+  "campaign_halo_pairs": [
+    {"campaign_a": "TV_Nat_Brand",      "campaign_b": "Search_Brand"},
+    {"campaign_a": "TV_Nat_Promo",      "campaign_b": "Search_Generic"},
+    {"campaign_a": "TV_Reg_Awareness",  "campaign_b": "Search_Brand"}
+  ],
+  "min_halo_spend": 100000.0,
+  "scoring": {
+    "correlation_weight": 0.5,
+    "overlap_weight": 0.3,
+    "spend_weight": 0.2
+  }
+}

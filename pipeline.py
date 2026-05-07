@@ -74,7 +74,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30% bounds")
     p.add_argument("--target", type=float, default=None, help="Target conversions for reverse optimization")
     p.add_argument("--freeze", nargs="*", default=[], help="Channels to freeze (e.g. --freeze TV OOH)")
-    p.add_argument("--halo", nargs="*", default=["TV,Digital"], help="Halo pairs e.g. TV,Digital Radio,Digital")
+    p.add_argument("--halo", nargs="*", default=None, help="Channel-level halo pairs e.g. TV,Digital Radio,Digital (overridden by --halo-config)")
+    p.add_argument("--halo-config", default=None, dest="halo_config", help="Path to halo_config.json with channel- and campaign-level halo pairs")
+    p.add_argument("--min-halo-spend", type=float, default=0.0, dest="min_halo_spend", help="Minimum total campaign spend to be eligible as halo candidate (raw currency units)")
+    p.add_argument("--halo-top-n", type=int, default=10, dest="halo_top_n", help="Number of top halo candidates to print in analysis step")
     p.add_argument("--output-dir", default="outputs", help="Directory for saved outputs")
     return p.parse_args()
 
@@ -96,6 +99,31 @@ def _parse_halo_pairs(raw: list[str]) -> list[tuple[str, str]]:
         if len(parts) == 2:
             pairs.append((parts[0].strip(), parts[1].strip()))
     return pairs
+
+
+def _load_halo_config(path: str) -> dict:
+    import json
+    with open(path) as f:
+        return json.load(f)
+
+
+def _resolve_halo_from_args(args) -> tuple[list, list, float]:
+    """Parse CLI args / halo config into (channel_pairs, campaign_pairs, min_spend)."""
+    if args.halo_config:
+        config = _load_halo_config(args.halo_config)
+        ch_pairs = [
+            (p["channel_a"], p["channel_b"])
+            for p in config.get("channel_halo_pairs", [])
+        ]
+        camp_pairs = [
+            (p["campaign_a"], p["campaign_b"])
+            for p in config.get("campaign_halo_pairs", [])
+        ]
+        min_spend = config.get("min_halo_spend", args.min_halo_spend)
+        return ch_pairs, camp_pairs, float(min_spend)
+    else:
+        ch_pairs = _parse_halo_pairs(args.halo or ["TV,Digital"])
+        return ch_pairs, [], args.min_halo_spend
 
 
 # ---------------------------------------------------------------------------
@@ -146,17 +174,56 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     return dataset
 
 
+def step_halo_analysis(dataset, args) -> pd.DataFrame:
+    _section("STEP 2b: Halo Candidate Analysis")
+
+    from src.halo_analysis import rank_halo_candidates, plot_halo_heatmap
+
+    if dataset.campaign_spend_matrix is None:
+        print("  No campaign spend data available. Skipping halo analysis.")
+        return pd.DataFrame()
+
+    # Use typical adstock decay rates as a prior for the scoring step
+    channel_decay = {ch: 0.4 for ch in dataset.channel_names}
+
+    scored_df = rank_halo_candidates(
+        campaign_df=dataset.campaign_df,
+        channel_decay=channel_decay,
+        min_halo_spend=args.min_halo_spend,
+        top_n=args.halo_top_n,
+    )
+
+    if scored_df.empty:
+        print(f"  No candidates found (min_halo_spend=£{args.min_halo_spend:,.0f}).")
+    else:
+        print(f"\n  Top {len(scored_df)} halo candidates (cross-channel pairs):\n")
+        display_cols = [
+            "campaign_a", "channel_a", "campaign_b", "channel_b",
+            "adstock_correlation", "spend_overlap", "min_total_spend", "composite_score",
+        ]
+        print(scored_df[display_cols].to_string(index=False))
+
+        if not args.no_plots:
+            heatmap_path = os.path.join(args.output_dir, "plots", "halo_candidates.png")
+            fig = plot_halo_heatmap(scored_df, save_path=heatmap_path)
+            plt.close(fig)
+
+    return scored_df
+
+
 def step_fit_model(dataset, args) -> "MMMResults":
     _section("STEP 3: Fit Bayesian MMM")
 
-    halo_pairs = _parse_halo_pairs(args.halo)
+    ch_halo_pairs, camp_halo_pairs, min_halo_spend = _resolve_halo_from_args(args)
     inference = "map" if args.fast else ("advi" if args.advi else "mcmc")
 
     cfg = ModelConfig(
         adstock_type="geometric",
         saturation_type="hill",
         adstock_max_lag=13,
-        halo_pairs=halo_pairs,
+        halo_pairs=ch_halo_pairs,
+        campaign_halo_pairs=camp_halo_pairs,
+        min_halo_spend=min_halo_spend,
         n_samples=args.samples,
         n_tune=args.tune,
         n_chains=args.chains,
@@ -165,18 +232,19 @@ def step_fit_model(dataset, args) -> "MMMResults":
         inference=inference,
     )
 
-    print(f"  Inference     : {inference}")
-    print(f"  Adstock       : geometric (max_lag=13)")
-    print(f"  Saturation    : Hill")
-    print(f"  Halo pairs    : {halo_pairs}")
+    print(f"  Inference          : {inference}")
+    print(f"  Adstock            : geometric (max_lag=13)")
+    print(f"  Saturation         : Hill")
+    print(f"  Channel halo pairs : {ch_halo_pairs}")
+    print(f"  Campaign halo pairs: {camp_halo_pairs}")
     if inference == "mcmc":
-        print(f"  Samples       : {args.samples} × {args.chains} chains")
+        print(f"  Samples            : {args.samples} × {args.chains} chains")
 
     mmm = BayesianMMM(cfg)
     t0 = time.time()
     results = mmm.fit(dataset)
     elapsed = time.time() - t0
-    print(f"  Fit time      : {elapsed:.1f}s")
+    print(f"  Fit time           : {elapsed:.1f}s")
 
     return results, mmm
 
@@ -411,6 +479,7 @@ def main() -> None:
 
     campaign_df, channel_df = step_generate_data(args)
     dataset = step_preprocess(channel_df, campaign_df, args)
+    step_halo_analysis(dataset, args)
     results, mmm = step_fit_model(dataset, args)
     contributions, roi_df = step_contributions(results, mmm, args)
     curves = step_response_curves(results, mmm, args)
