@@ -134,6 +134,12 @@ class MMMDataset:
     # Campaign-level data (optional, for hierarchical model)
     campaign_df: Optional[pd.DataFrame] = None
 
+    # Campaign-level spend matrix: (T, N_campaigns) raw unscaled spend.
+    # Columns align with campaign_names. None when campaign_df not provided.
+    campaign_spend_matrix: Optional[np.ndarray] = None
+    campaign_names: Optional[list] = None
+    campaign_channels: Optional[list] = None  # parent channel per campaign
+
     @property
     def n_time(self) -> int:
         return len(self.dates)
@@ -235,6 +241,15 @@ class DataProcessor:
         train_mask[: T - n_test] = True
         test_mask[T - n_test :] = True
 
+        # Campaign-level spend (optional)
+        camp_spend_matrix = None
+        camp_names = None
+        camp_channels = None
+        if campaign_df is not None:
+            camp_spend_matrix, camp_names, camp_channels = (
+                self._extract_campaign_spend(campaign_df, dates)
+            )
+
         return MMMDataset(
             dates=dates,
             spend_matrix=spend_scaled,
@@ -249,6 +264,9 @@ class DataProcessor:
             train_mask=train_mask,
             test_mask=test_mask,
             campaign_df=campaign_df,
+            campaign_spend_matrix=camp_spend_matrix,
+            campaign_names=camp_names,
+            campaign_channels=camp_channels,
         )
 
     # ------------------------------------------------------------------
@@ -285,6 +303,41 @@ class DataProcessor:
             .reset_index()
             .sort_values([cfg.date_col, cfg.channel_col])
         )
+
+    def _extract_campaign_spend(
+        self,
+        campaign_df: pd.DataFrame,
+        dates: np.ndarray,
+    ) -> tuple[np.ndarray, list, list]:
+        """Pivot campaign_df to a (T, N_campaigns) raw spend matrix aligned to dates.
+
+        Returns:
+            campaign_spend_matrix: (T, N_campaigns) float64.
+            campaign_names: ordered list of campaign name strings.
+            campaign_channels: parent channel name per campaign (same order).
+        """
+        cfg = self.config
+        pivot = (
+            campaign_df.pivot_table(
+                index=cfg.date_col,
+                columns="campaign",
+                values=cfg.spend_col,
+                aggfunc="sum",
+                fill_value=0.0,
+            )
+            .sort_index()
+        )
+        # Align to the main date index (fill any missing dates with 0)
+        date_index = pd.DatetimeIndex(dates)
+        pivot = pivot.reindex(date_index, fill_value=0.0)
+
+        camp_names = list(pivot.columns)
+        ch_lookup = (
+            campaign_df.groupby("campaign")[cfg.channel_col].first().to_dict()
+        )
+        camp_channels = [ch_lookup.get(c, "") for c in camp_names]
+
+        return pivot.values.astype(float), camp_names, camp_channels
 
     def _build_controls(
         self, dates_series: pd.Series, df: pd.DataFrame
