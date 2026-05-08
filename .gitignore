@@ -7,3 +7,12 @@ outputs/
 dist/
 build/
 .ipynb_checkpoints/
+
+# API
+uploads/
+idata/
+*.db
+
+# React
+webapp/node_modules/
+webapp/dist/
