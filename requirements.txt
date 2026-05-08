@@ -1,6 +1,7 @@
 # Bayesian MMM + Optimization stack
-# pandas<3 required to avoid conflicts with mlflow / streamlit in the environment
-# numpy>=2.0 is fine — sagemaker/pywavelets not required
+# No scikit-learn — StandardScaler replaced with numpy equivalent to avoid
+# pyarrow -> numpy.core.multiarray import failure on numpy 2.x (Windows)
+# pandas<3 to stay compatible with mlflow/streamlit already in the environment
 
 numpy>=2.0
 pymc>=5.10.0
@@ -8,5 +9,4 @@ pytensor>=2.26.0
 arviz>=0.18.0
 scipy>=1.13.0
 pandas>=2.2.0,<3.0
-scikit-learn>=1.4.0
 matplotlib>=3.8.0
