@@ -18,7 +18,29 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
+
+
+class StandardScaler:
+    """Minimal numpy drop-in for sklearn.preprocessing.StandardScaler.
+
+    Removes the sklearn/pyarrow dependency that causes numpy 2.x import
+    failures on Windows (ImportError: numpy.core.multiarray failed to import).
+    Exposes the same interface used by the rest of the codebase:
+      fit_transform, inverse_transform, scale_, mean_
+    """
+
+    def __init__(self):
+        self.mean_: np.ndarray = np.array([0.0])
+        self.scale_: np.ndarray = np.array([1.0])
+
+    def fit_transform(self, X: np.ndarray) -> np.ndarray:
+        self.mean_ = X.mean(axis=0)
+        self.scale_ = X.std(axis=0, ddof=0)
+        self.scale_ = np.where(self.scale_ == 0, 1.0, self.scale_)
+        return (X - self.mean_) / self.scale_
+
+    def inverse_transform(self, X: np.ndarray) -> np.ndarray:
+        return X * self.scale_ + self.mean_
 
 
 # ---------------------------------------------------------------------------
