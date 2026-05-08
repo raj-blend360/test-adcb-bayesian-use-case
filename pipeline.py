@@ -79,6 +79,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-halo-spend", type=float, default=0.0, dest="min_halo_spend", help="Minimum total campaign spend to be eligible as halo candidate (raw currency units)")
     p.add_argument("--halo-top-n", type=int, default=10, dest="halo_top_n", help="Number of top halo candidates to print in analysis step")
     p.add_argument("--output-dir", default="outputs", help="Directory for saved outputs")
+    p.add_argument("--channel-csv", default=None, dest="channel_csv",
+                   help="Path to channel-level CSV (skips synthetic data generation)")
+    p.add_argument("--campaign-csv", default=None, dest="campaign_csv",
+                   help="Path to campaign-level CSV (optional, enables campaign-level halo effects)")
     return p.parse_args()
 
 
@@ -147,6 +151,29 @@ def step_generate_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
     total_spend = channel_df["media_spend"].sum()
     total_conv = channel_df.groupby("date")["conversions"].mean().sum()
     print(f"  Total spend   : £{total_spend:,.0f}")
+    print(f"  Total conv    : {total_conv:,.0f}")
+    return campaign_df, channel_df
+
+
+def step_load_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
+    _section("STEP 1: Load Real Data")
+    channel_df = pd.read_csv(args.channel_csv)
+    channel_df["date"] = pd.to_datetime(channel_df["date"])
+
+    campaign_df = None
+    if args.campaign_csv:
+        campaign_df = pd.read_csv(args.campaign_csv)
+        campaign_df["date"] = pd.to_datetime(campaign_df["date"])
+        print(f"  Campaign rows : {len(campaign_df):,}")
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    print(f"  Channel rows  : {len(channel_df):,}")
+    print(f"  Date range    : {channel_df['date'].min().date()} → {channel_df['date'].max().date()}")
+    print(f"  Channels      : {sorted(channel_df['channel'].unique().tolist())}")
+
+    total_spend = channel_df["media_spend"].sum()
+    total_conv = channel_df.groupby("date")["conversions"].mean().sum()
+    print(f"  Total spend   : {total_spend:,.0f}")
     print(f"  Total conv    : {total_conv:,.0f}")
     return campaign_df, channel_df
 
@@ -326,7 +353,7 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
         channel_params,
         total_budget,
         annual_spend,
-        campaign_df=campaign_df if not campaign_df.empty else None,
+        campaign_df=campaign_df if campaign_df is not None and not campaign_df.empty else None,
     )
 
     print(f"\n  Optimization success : {opt_result.success}")
@@ -477,7 +504,10 @@ def main() -> None:
 
     t_start = time.time()
 
-    campaign_df, channel_df = step_generate_data(args)
+    if args.channel_csv:
+        campaign_df, channel_df = step_load_data(args)
+    else:
+        campaign_df, channel_df = step_generate_data(args)
     dataset = step_preprocess(channel_df, campaign_df, args)
     step_halo_analysis(dataset, args)
     results, mmm = step_fit_model(dataset, args)
