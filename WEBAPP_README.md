@@ -303,6 +303,12 @@ Check the backend terminal for Python tracebacks. Common causes:
 
 Ensure Node.js ≥ 18: `node --version`. Behind a corporate proxy: `npm config set proxy http://your-proxy:port`.
 
+**`NotImplementedError: Masked arrays or arrays with nan entries are not supported`**
+
+This means your CSV has weeks where a channel has no spend row, producing NaN after the pivot. This is handled automatically — missing channel-weeks are filled with 0. If you still see this error, check your CSV for:
+- Completely empty `media_spend` or `conversions` columns
+- Non-numeric values in numeric columns (e.g. `"-"` or `"N/A"` instead of `0`)
+
 **Pipeline crashes on your CSV**
 
 Run with `--fast --no-plots` first to isolate data issues quickly:
