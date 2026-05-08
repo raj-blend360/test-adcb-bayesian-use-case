@@ -223,21 +223,30 @@ class DataProcessor:
         df = self._aggregate_to_channel_weekly(df)
 
         # Pivot to wide: rows=weeks, cols=channels
-        spend_wide = df.pivot(
-            index=cfg.date_col, columns=cfg.channel_col, values=cfg.spend_col
-        ).sort_index()
+        spend_wide = (
+            df.pivot(
+                index=cfg.date_col, columns=cfg.channel_col, values=cfg.spend_col
+            )
+            .sort_index()
+            .fillna(0.0)  # weeks with no spend for a channel → 0
+        )
         channel_names = list(spend_wide.columns)
         spend_raw = spend_wide.values.astype(float)
         dates = spend_wide.index.values
 
-        # Target (sum over channels per week)
+        # Target (mean over channels per week), fill any missing weeks with 0
         target_wide = df.groupby(cfg.date_col)[cfg.target_col].mean()
-        target_raw = target_wide.loc[spend_wide.index].values.astype(float)
+        target_raw = target_wide.reindex(spend_wide.index, fill_value=0.0).values.astype(float)
 
         # Control / seasonality features
         control_matrix, control_names = self._build_controls(
             pd.Series(spend_wide.index, name="date"), df
         )
+
+        # Guard: replace any remaining NaN/Inf that could slip through from real data
+        spend_raw = np.nan_to_num(spend_raw, nan=0.0, posinf=0.0, neginf=0.0)
+        target_raw = np.nan_to_num(target_raw, nan=0.0, posinf=0.0, neginf=0.0)
+        control_matrix = np.nan_to_num(control_matrix, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Scaling
         spend_scaler = None
