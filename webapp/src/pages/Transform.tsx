@@ -16,9 +16,9 @@ const SAT_TYPES = ['hill', 'logistic', 'michaelis_menten']
 function defaultChannelConfig(channel: string) {
   return {
     channel,
-    adstock: { adstock_type: 'geometric', max_lag: 8, decay_prior_mean: 0.5 },
+    adstock: { adstock_type: 'geometric', max_lag: 4, decay_prior_mean: 0.5 },
     saturation: { saturation_type: 'hill', alpha_prior_mean: 2.0, lambda_prior_mean: 0.5 },
-    metric: 'conversions',
+    metric: 'media_spend',
   }
 }
 
@@ -41,6 +41,8 @@ export default function TransformPage() {
     queryFn: () => getUploadColumns(sessionId!),
     enabled: !!sessionId,
   })
+  const availableMetrics = ['media_spend', 'impressions', 'clicks'].filter((m) =>
+    (colData?.channel_columns ?? []).includes(m))
 
   useEffect(() => {
     if (colData?.channels) {
@@ -218,7 +220,7 @@ export default function TransformPage() {
                       <input
                         type="range"
                         min={1}
-                        max={13}
+                        max={8}
                         value={cfg.adstock.max_lag}
                         onChange={(e) => updateChannel(cfg.channel, 'adstock', 'max_lag', Number(e.target.value))}
                         className="w-full"
@@ -275,8 +277,8 @@ export default function TransformPage() {
 
                   {/* Metric */}
                   <div className="space-y-3">
-                    <h4 className="text-sm font-medium text-gray-800">Target metric</h4>
-                    {['conversions', 'impressions', 'clicks'].map((m) => (
+                    <h4 className="text-sm font-medium text-gray-800">Input metric</h4>
+                    {availableMetrics.map((m) => (
                       <label key={m} className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="radio"
