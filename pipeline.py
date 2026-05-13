@@ -79,7 +79,7 @@ def parse_args() -> argparse.Namespace:
                    help="Per-channel input metric as Channel:metric (metric in {impressions,clicks,spends})")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
-    p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30% bounds")
+    p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30%% bounds")
     p.add_argument("--target", type=float, default=None, help="Target conversions for reverse optimization")
     p.add_argument("--freeze", nargs="*", default=[], help="Channels to freeze (e.g. --freeze TV OOH)")
     p.add_argument("--halo", nargs="*", default=None, help="Channel-level halo pairs e.g. TV,Digital Radio,Digital (overridden by --halo-config)")
