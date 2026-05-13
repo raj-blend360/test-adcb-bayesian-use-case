@@ -517,8 +517,19 @@ class BayesianMMM:
         # Pull posterior samples
         post = idata.posterior
         beta_samples = post["beta"].values  # (chains, draws, C)
-        n_chains, n_draws, n_ch = beta_samples.shape
+        _, _, n_ch = beta_samples.shape
         beta_flat = beta_samples.reshape(-1, n_ch)
+
+        # Flatten parameter tensors once to avoid repeated reshape + Python loops.
+        alpha_hill_flat = gamma_hill_flat = lam_flat = vmax_flat = km_flat = None
+        if cfg.saturation_type == "hill":
+            alpha_hill_flat = post["alpha_hill"].values.reshape(-1, n_ch)
+            gamma_hill_flat = post["gamma_hill"].values.reshape(-1, n_ch)
+        elif cfg.saturation_type == "logistic":
+            lam_flat = post["lam"].values.reshape(-1, n_ch)
+        else:
+            vmax_flat = post["vmax"].values.reshape(-1, n_ch)
+            km_flat = post["km"].values.reshape(-1, n_ch)
 
         curves = {}
         for c, ch in enumerate(dataset.channel_names):
@@ -527,34 +538,27 @@ class BayesianMMM:
             x_max = raw_spend.max() * spend_multiplier
             spend_grid = np.linspace(0, x_max, n_points)
 
-            n_samples = beta_flat.shape[0]
-            conv_samples = np.zeros((n_samples, n_points))
+            # Vectorized across posterior samples (rows) and spend grid points (cols).
+            if cfg.saturation_type == "hill":
+                x_ref = raw_spend.max() + 1e-8
+                x_norm = spend_grid / x_ref  # (n_points,)
+                ah = alpha_hill_flat[:, c][:, None]  # (n_samples, 1)
+                gh = gamma_hill_flat[:, c][:, None]  # (n_samples, 1)
+                x_pow = np.power(x_norm[None, :], ah)
+                sat = x_pow / (x_pow + np.power(gh, ah))
+            elif cfg.saturation_type == "logistic":
+                lm = lam_flat[:, c][:, None]  # (n_samples, 1)
+                sat = 1.0 / (1.0 + np.exp(-lm * spend_grid[None, :]))
+            else:
+                vm = vmax_flat[:, c][:, None]  # (n_samples, 1)
+                km_ = km_flat[:, c][:, None]  # (n_samples, 1)
+                sat = (vm * spend_grid[None, :]) / (km_ + spend_grid[None, :] + 1e-12)
 
-            for s in range(n_samples):
-                b = float(beta_flat[s, c])
-
-                # Saturation
-                if cfg.saturation_type == "hill":
-                    ah = float(post["alpha_hill"].values.reshape(-1, n_ch)[s, c])
-                    gh = float(post["gamma_hill"].values.reshape(-1, n_ch)[s, c])
-                    # Normalise grid by reference max
-                    x_ref = raw_spend.max() + 1e-8
-                    x_norm = spend_grid / x_ref
-                    sat = x_norm**ah / (x_norm**ah + gh**ah)
-                elif cfg.saturation_type == "logistic":
-                    lm = float(post["lam"].values.reshape(-1, n_ch)[s, c])
-                    sat = logistic_saturation_np(spend_grid, lm)
-                else:
-                    vm = float(post["vmax"].values.reshape(-1, n_ch)[s, c])
-                    km_ = float(post["km"].values.reshape(-1, n_ch)[s, c])
-                    sat = michaelis_menten_np(spend_grid, vm, km_)
-
-                conv_samples[s] = b * sat
+            conv_samples = beta_flat[:, c][:, None] * sat
 
             # Unscale: multiply by target scale factor if applicable
             if dataset.target_scaler is not None:
                 scale = dataset.target_scaler.scale_[0]
-                mean_ = dataset.target_scaler.mean_[0]
                 conv_samples = conv_samples * scale
 
             curves[ch] = {
