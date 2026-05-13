@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -62,6 +62,7 @@ class HaloPair(BaseModel):
 
 class FitRequest(BaseModel):
     session_id: int
+    fit_speed: Optional[Literal["fast", "standard", "thorough"]] = None
     inference_method: str = "map"  # map / advi / mcmc
     samples: int = 1000
     tune: int = 1000
