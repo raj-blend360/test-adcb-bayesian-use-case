@@ -172,6 +172,109 @@ One row per **week × channel**.
 | `holiday_flag` | No | 1 if a holiday week, 0 otherwise |
 | `promo_flag` | No | 1 if a promotional week, 0 otherwise |
 
+**Example with control variables:**
+```
+date,channel,media_spend,conversions,holiday_flag,promo_flag
+2023-01-02,TV,500000,1200,0,0
+2023-01-02,Digital,300000,800,0,0
+2023-01-02,Radio,80000,200,0,0
+2023-01-09,TV,480000,1150,0,0
+2023-01-09,Digital,310000,820,0,0
+2023-01-09,Radio,75000,190,0,0
+2023-12-18,TV,420000,950,1,0
+2023-12-18,Digital,280000,700,1,0
+2023-12-18,Radio,65000,160,1,0
+2023-12-25,TV,350000,750,1,0
+2023-12-25,Digital,200000,550,1,0
+2023-12-25,Radio,50000,130,1,0
+2024-02-14,TV,520000,1250,0,1
+2024-02-14,Digital,350000,950,0,1
+2024-02-14,Radio,90000,230,0,1
+```
+
+**How to interpret:**
+- Week of 2023-12-18 and 2023-12-25: `holiday_flag=1` (Christmas season)
+- Week of 2024-02-14: `promo_flag=1` (Valentine's Day promotional push)
+- All other weeks: both flags = 0
+
+---
+
+## Adding Custom Control Variables
+
+You can add **any numeric column** to your CSV and include it as a control variable. Examples:
+
+```
+date,channel,media_spend,conversions,holiday_flag,promo_flag,competitor_promo,major_event,economic_index
+2023-01-02,TV,500000,1200,0,0,0,0,1.05
+2023-01-02,Digital,300000,800,0,0,0,0,1.05
+2023-12-25,TV,350000,750,1,0,0,0,0.98
+2023-12-25,Digital,200000,550,1,0,0,0,0.98
+2024-02-14,TV,520000,1250,0,1,1,0,1.02
+2024-02-14,Digital,350000,950,0,1,1,0,1.02
+2024-06-15,TV,480000,1100,0,0,0,1,1.08
+2024-06-15,Digital,320000,880,0,0,0,1,1.08
+```
+
+Then tell the system to include them in the model:
+
+**Via CLI:**
+```python
+from src.data_processing import DataConfig, DataProcessor
+
+cfg = DataConfig(
+    control_cols=["holiday_flag", "promo_flag", "competitor_promo", "major_event", "economic_index"]
+)
+processor = DataProcessor(cfg)
+dataset = processor.prepare(channel_df)
+```
+
+**Via webapp (Transform page):**
+- These custom columns won't have checkboxes (the UI only shows the default ones)
+- To enable them, edit `pipeline.py` or use the CLI with a modified `DataConfig`
+
+**What you can add:**
+
+| Column Name | Type | Example | What it captures |
+|---|---|---|---|
+| `holiday_flag` | 0/1 | Christmas, Eid, New Year | Major holidays that affect behavior |
+| `promo_flag` | 0/1 | Sales event, clearance | Your brand's promotional activities |
+| `competitor_promo` | 0/1 | Competitor running ads | Competitive activity in the market |
+| `major_event` | 0/1 | Sports event, concert | External events (World Cup, Olympics, etc.) |
+| `economic_index` | float | 0.98–1.05 | Economic conditions (GDP growth, inflation) |
+| `weather_score` | float | 0–1 | Extreme weather (heatwave, snowstorm) |
+| `marketing_push` | 0/1 | Brand campaign | Internal marketing intensity |
+
+---
+
+## How Control Variables Work in the Model
+
+The model learns a coefficient for each control variable:
+
+```
+Conversions = Base + 
+              (Channel 1 effect) + (Channel 2 effect) + ... +
+              (Adstock × Saturation for each channel) +
+              (Holiday coefficient × holiday_flag) +
+              (Promo coefficient × promo_flag) +
+              (Other controls) +
+              Noise
+```
+
+For example:
+- If `holiday_flag=1` is consistently followed by **lower** conversions, the model learns a **negative holiday coefficient**
+- If `economic_index=0.95` (recession) correlates with **lower** conversions, the model captures that relationship
+- The model separates **media spend effects** from **external factors**
+
+---
+
+## Rules for Control Variables
+
+1. **One value per week, shared across channels** — all channels see the same `holiday_flag` or `major_event` that week
+2. **Numeric only** — use 0/1 for flags, floats for indices (0.98, 1.05, etc.)
+3. **No NaN/missing values** — if you don't have data, use 0
+4. **Don't include columns you'll pass elsewhere** — e.g., don't put `date` or `channel` in control_cols
+5. **Optional columns** — if a column is missing from your CSV, it's simply ignored
+
 **Minimal example:**
 ```
 date,channel,media_spend,conversions
