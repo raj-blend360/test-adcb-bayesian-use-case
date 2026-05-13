@@ -39,7 +39,7 @@ class ChannelTransformConfig(BaseModel):
     channel: str
     adstock: ChannelAdstockConfig = ChannelAdstockConfig()
     saturation: ChannelSaturationConfig = ChannelSaturationConfig()
-    metric: str = "media_spend"  # media_spend / impressions / clicks
+    metric: str = "clicks"  # media_spend / impressions / clicks
 
 class TransformConfigRequest(BaseModel):
     session_id: int

@@ -18,7 +18,7 @@ function defaultChannelConfig(channel: string) {
     channel,
     adstock: { adstock_type: 'geometric', max_lag: 4, decay_prior_mean: 0.5 },
     saturation: { saturation_type: 'hill', alpha_prior_mean: 2.0, lambda_prior_mean: 0.5 },
-    metric: 'media_spend',
+    metric: 'clicks',
   }
 }
 
