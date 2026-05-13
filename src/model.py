@@ -359,7 +359,22 @@ class BayesianMMM:
                 if cfg.nuts_sampler in {"numpyro", "blackjax"}:
                     sample_kwargs["nuts_sampler"] = cfg.nuts_sampler
 
-                idata = pm.sample(**sample_kwargs)
+                try:
+                    idata = pm.sample(**sample_kwargs)
+                except ImportError as exc:
+                    # PyMC external samplers (NumPyro/BlackJAX) require JAX/JAXLIB.
+                    # On Windows, mismatched wheels often fail with a DLL load error.
+                    err_msg = str(exc).lower()
+                    using_external_sampler = sample_kwargs.get("nuts_sampler") in {"numpyro", "blackjax"}
+                    if using_external_sampler and ("dll load failed" in err_msg or "while importing _jax" in err_msg):
+                        sample_kwargs.pop("nuts_sampler", None)
+                        print(
+                            "[WARN] Falling back to PyMC's native NUTS because JAX/JAXLIB failed to load "
+                            f"({exc})."
+                        )
+                        idata = pm.sample(**sample_kwargs)
+                    else:
+                        raise
                 pm.sample_posterior_predictive(idata, extend_inferencedata=True)
             elif cfg.inference == "advi":
                 approx = pm.fit(
