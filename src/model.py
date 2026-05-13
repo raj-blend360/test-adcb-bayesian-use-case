@@ -77,7 +77,7 @@ class ModelConfig:
     inference: str = "mcmc"
 
     # Prior scales
-    beta_prior_sigma: float = 1.0
+    beta_prior_sigma: float = 0.3
     alpha_hill_mean: float = 2.0
     alpha_hill_sigma: float = 0.5
     gamma_hill_alpha: float = 3.0
@@ -189,7 +189,9 @@ class BayesianMMM:
             n_controls = dataset.n_controls
 
             # ---- Channel-level priors -----------------------------------
-            beta = pm.HalfNormal("beta", sigma=cfg.beta_prior_sigma, shape=n_channels)
+            beta_mu = pm.Normal("beta_mu", mu=0.0, sigma=cfg.beta_prior_sigma)
+            beta_z = pm.Normal("beta_z", mu=0.0, sigma=1.0, shape=n_channels)
+            beta = pm.Deterministic("beta", beta_mu + cfg.beta_prior_sigma * beta_z)
 
             # Adstock parameters
             if cfg.adstock_type == "geometric":

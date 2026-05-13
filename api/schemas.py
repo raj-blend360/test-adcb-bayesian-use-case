@@ -27,7 +27,7 @@ class UploadResponse(BaseModel):
 
 class ChannelAdstockConfig(BaseModel):
     adstock_type: str = "geometric"  # geometric / weibull
-    max_lag: int = 8
+    max_lag: int = 4
     decay_prior_mean: float = 0.5
 
 class ChannelSaturationConfig(BaseModel):
@@ -39,7 +39,7 @@ class ChannelTransformConfig(BaseModel):
     channel: str
     adstock: ChannelAdstockConfig = ChannelAdstockConfig()
     saturation: ChannelSaturationConfig = ChannelSaturationConfig()
-    metric: str = "conversions"  # conversions / impressions / clicks
+    metric: str = "media_spend"  # media_spend / impressions / clicks
 
 class TransformConfigRequest(BaseModel):
     session_id: int
@@ -69,7 +69,7 @@ class FitRequest(BaseModel):
     target_accept: float = 0.9
     halo_pairs: list[HaloPair] = []
     min_halo_spend: float = 0.0
-    adstock_max_lag: int = 8
+    adstock_max_lag: int = 4
     transform_config_id: Optional[int] = None
 
 
