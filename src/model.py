@@ -72,6 +72,9 @@ class ModelConfig:
     n_chains: int = 2
     target_accept: float = 0.90
     random_seed: int = 42
+    cores: Optional[int] = None
+    nuts_sampler: str = "numpyro"  # numpyro | blackjax | pymc
+    nuts_init: str = "jitter+adapt_diag"
 
     # Inference method: "mcmc" | "map" | "advi"
     inference: str = "mcmc"
@@ -342,15 +345,21 @@ class BayesianMMM:
         # ---- Inference --------------------------------------------------
         with model:
             if cfg.inference == "mcmc":
-                idata = pm.sample(
+                sample_kwargs = dict(
                     draws=cfg.n_samples,
                     tune=cfg.n_tune,
                     chains=cfg.n_chains,
+                    cores=cfg.cores,
                     target_accept=cfg.target_accept,
                     random_seed=cfg.random_seed,
                     progressbar=True,
                     return_inferencedata=True,
+                    init=cfg.nuts_init,
                 )
+                if cfg.nuts_sampler in {"numpyro", "blackjax"}:
+                    sample_kwargs["nuts_sampler"] = cfg.nuts_sampler
+
+                idata = pm.sample(**sample_kwargs)
                 pm.sample_posterior_predictive(idata, extend_inferencedata=True)
             elif cfg.inference == "advi":
                 approx = pm.fit(
