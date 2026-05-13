@@ -310,7 +310,15 @@ def generate_diagnostic_report(results: MMMResults) -> pd.DataFrame:
         print(f"    Could not compute PPC: {e}")
 
     print("\n[4] Posterior Summary (top parameters)")
-    print(conv_df[["mean", "sd", "hdi_3%", "hdi_97%"]].head(20).to_string())
+    summary_cols = ["mean", "sd"]
+    hdi_cols = [c for c in conv_df.columns if c.startswith("hdi_")]
+    if hdi_cols:
+        summary_cols.extend(hdi_cols[:2])
+    available_cols = [c for c in summary_cols if c in conv_df.columns]
+    if available_cols:
+        print(conv_df[available_cols].head(20).to_string())
+    else:
+        print("    No posterior summary columns available.")
     print("=" * 60)
 
     return conv_df

@@ -348,11 +348,22 @@ class DataProcessor:
             campaign_channels: parent channel name per campaign (same order).
         """
         cfg = self.config
+        spend_col = cfg.spend_col
+        if spend_col not in campaign_df.columns:
+            # Campaign-level files may only contain raw spend while channel-level
+            # inputs can use a transformed media_input column.
+            if "media_spend" in campaign_df.columns:
+                spend_col = "media_spend"
+            else:
+                raise KeyError(
+                    f"Campaign spend column '{cfg.spend_col}' is missing and no fallback column was found."
+                )
+
         pivot = (
             campaign_df.pivot_table(
                 index=cfg.date_col,
                 columns="campaign",
-                values=cfg.spend_col,
+                values=spend_col,
                 aggfunc="sum",
                 fill_value=0.0,
             )

@@ -367,7 +367,7 @@ class BayesianMMM:
                     if v is not None:
                         merged[k] = np.array([[v]])
 
-                idata = az.from_dict(posterior=merged)
+                idata = az.from_dict({"posterior": merged})
 
         return MMMResults(
             idata=idata,
