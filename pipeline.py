@@ -69,6 +69,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--samples", type=int, default=500, help="MCMC draw count per chain")
     p.add_argument("--tune", type=int, default=500, help="MCMC tuning steps")
     p.add_argument("--chains", type=int, default=2, help="MCMC chain count")
+    p.add_argument("--cores", type=int, default=None, help="CPU cores for parallel chains (default: PyMC auto)")
+    p.add_argument("--nuts-sampler", default="numpyro", choices=["numpyro", "blackjax", "pymc"], dest="nuts_sampler",
+                   help="NUTS backend for MCMC (numpyro is usually fastest)")
+    p.add_argument("--nuts-init", default="jitter+adapt_diag", dest="nuts_init",
+                   help="NUTS initialization strategy")
     p.add_argument("--weeks", type=int, default=104, help="Synthetic dataset weeks")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
@@ -268,6 +273,9 @@ def step_fit_model(dataset, args) -> "MMMResults":
         n_chains=args.chains,
         target_accept=0.90,
         random_seed=args.seed,
+        cores=args.cores,
+        nuts_sampler=args.nuts_sampler,
+        nuts_init=args.nuts_init,
         inference=inference,
     )
 
@@ -278,6 +286,7 @@ def step_fit_model(dataset, args) -> "MMMResults":
     print(f"  Campaign halo pairs: {camp_halo_pairs}")
     if inference == "mcmc":
         print(f"  Samples            : {args.samples} × {args.chains} chains")
+        print(f"  NUTS backend       : {args.nuts_sampler}")
 
     mmm = BayesianMMM(cfg)
     t0 = time.time()
