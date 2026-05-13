@@ -262,18 +262,25 @@ class BayesianMMM:
 
             # ---- Halo effects (channel-level) ---------------------------
             halo_total = pt.zeros(spend_data.shape[0])
-            for hi, (ca, cb) in enumerate(ch_halo_idx):
-                halo_term = delta_halo[hi] * adstocked[:, ca] * adstocked[:, cb]
-                halo_total = halo_total + halo_term
+            if ch_halo_idx:
+                ch_halo_idx_arr = np.asarray(ch_halo_idx, dtype=np.int64)
+                ch_idx_a = pt.as_tensor_variable(ch_halo_idx_arr[:, 0])
+                ch_idx_b = pt.as_tensor_variable(ch_halo_idx_arr[:, 1])
+                ch_pair_products = adstocked[:, ch_idx_a] * adstocked[:, ch_idx_b]
+                halo_total = halo_total + pt.sum(ch_pair_products * delta_halo, axis=1)
 
             # ---- Halo effects (campaign-level) --------------------------
             if has_campaign_halo and camp_halo_idx:
-                for hi, (ca, cb) in enumerate(camp_halo_idx):
-                    halo_total = halo_total + (
-                        delta_halo_campaign[hi]
-                        * campaign_spend_data[:, ca]
-                        * campaign_spend_data[:, cb]
-                    )
+                camp_halo_idx_arr = np.asarray(camp_halo_idx, dtype=np.int64)
+                camp_idx_a = pt.as_tensor_variable(camp_halo_idx_arr[:, 0])
+                camp_idx_b = pt.as_tensor_variable(camp_halo_idx_arr[:, 1])
+                camp_pair_products = (
+                    campaign_spend_data[:, camp_idx_a] * campaign_spend_data[:, camp_idx_b]
+                )
+                halo_total = halo_total + pt.sum(
+                    camp_pair_products * delta_halo_campaign,
+                    axis=1,
+                )
 
             # ---- Control regressors -------------------------------------
             ctrl_total = pt.zeros(spend_data.shape[0])
