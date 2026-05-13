@@ -374,7 +374,12 @@ class BayesianMMM:
                     if v is not None:
                         merged[k] = np.array([[v]])
 
-                idata = az.from_dict({"posterior": merged})
+                # NOTE:
+                # arviz.from_dict expects posterior variables via the keyword arg
+                # `posterior=...`. Passing a dict with a top-level "posterior" key
+                # creates a *single* variable called "posterior", which then breaks
+                # downstream access like idata.posterior["base"].
+                idata = az.from_dict(posterior=merged)
 
         return MMMResults(
             idata=idata,
