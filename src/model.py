@@ -382,15 +382,28 @@ class BayesianMMM:
         if not cfg.precompute_adstock:
             return spend
         if cfg.adstock_type != "geometric":
-            warnings.warn("Fast path only supports geometric adstock; using raw scaled spend.")
+            warnings.warn(
+                "precompute_adstock=True only supports geometric adstock. "
+                "Non-geometric adstock will fall back to raw scaled spend. "
+                "Set precompute_adstock=False to model non-geometric adstock."
+            )
             return spend
 
         x = spend - spend.min(axis=0, keepdims=True)
+        max_lag = max(0, int(cfg.adstock_max_lag))
+        if max_lag == 0:
+            return np.clip(x, 0.0, np.inf)
+
         alpha = 0.35
         out = np.zeros_like(x)
-        out[0] = x[0]
-        for t in range(1, x.shape[0]):
-            out[t] = x[t] + alpha * out[t - 1]
+
+        # Finite-lag geometric accumulation:
+        # out[t] = sum_{k=0..max_lag} alpha^k * x[t-k]
+        for t in range(x.shape[0]):
+            k_max = min(max_lag, t)
+            for k in range(k_max + 1):
+                out[t] += (alpha**k) * x[t - k]
+
         return np.clip(out, 0.0, np.inf)
 
     # ------------------------------------------------------------------

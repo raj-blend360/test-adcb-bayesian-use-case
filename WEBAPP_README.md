@@ -153,6 +153,8 @@ npm run dev
 | 6 | **Visualize** | View contributions, response curves, ROI, waterfall, weekly decomp; download CSV/PNG |
 | 7 | **Optimize** | Forward (budget → max conversions) or reverse (target → min spend); save scenarios |
 
+> **Adstock lag behavior:** The model fit API field `adstock_max_lag` now controls a finite-lag window for **geometric** adstock in the model precompute path. If non-geometric adstock is used while `precompute_adstock=True`, the backend emits a warning and falls back to raw scaled spend for that fast path.
+
 ---
 
 ## CSV Data Format

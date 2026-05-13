@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ─── Upload ──────────────────────────────────────────────────────────────────
@@ -69,7 +69,14 @@ class FitRequest(BaseModel):
     target_accept: float = 0.9
     halo_pairs: list[HaloPair] = []
     min_halo_spend: float = 0.0
-    adstock_max_lag: int = 4
+    adstock_max_lag: int = Field(
+        4,
+        description=(
+            "Finite lag window for geometric adstock in model precompute mode. "
+            "If non-geometric adstock is requested with precompute enabled, backend warns and "
+            "falls back to raw scaled spend for that fast path."
+        ),
+    )
     transform_config_id: Optional[int] = None
 
 
