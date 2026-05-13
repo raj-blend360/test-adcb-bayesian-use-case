@@ -32,6 +32,7 @@ Assumptions / design choices
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -83,6 +84,12 @@ def parse_args() -> argparse.Namespace:
                    help="Path to channel-level CSV (skips synthetic data generation)")
     p.add_argument("--campaign-csv", default=None, dest="campaign_csv",
                    help="Path to campaign-level CSV (optional, enables campaign-level halo effects)")
+    p.add_argument(
+        "--date-format",
+        default="%d-%m-%Y",
+        dest="date_format",
+        help="Date parsing format for input CSV files (used with --channel-csv/--campaign-csv)",
+    )
     return p.parse_args()
 
 
@@ -157,13 +164,18 @@ def step_generate_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def step_load_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
     _section("STEP 1: Load Real Data")
+    if not os.path.exists(args.channel_csv):
+        raise FileNotFoundError(f"Channel CSV not found: {args.channel_csv}")
+
     channel_df = pd.read_csv(args.channel_csv)
-    channel_df["date"] = pd.to_datetime(channel_df["date"], format='%d-%m-%Y')
+    channel_df["date"] = pd.to_datetime(channel_df["date"], format=args.date_format)
 
     campaign_df = None
     if args.campaign_csv:
+        if not os.path.exists(args.campaign_csv):
+            raise FileNotFoundError(f"Campaign CSV not found: {args.campaign_csv}")
         campaign_df = pd.read_csv(args.campaign_csv)
-        campaign_df["date"] = pd.to_datetime(campaign_df["date"], format='%d-%m-%Y')
+        campaign_df["date"] = pd.to_datetime(campaign_df["date"], format=args.date_format)
         print(f"  Campaign rows : {len(campaign_df):,}")
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -531,8 +543,22 @@ def main() -> None:
     )
 
     elapsed_total = time.time() - t_start
+    summary = {
+        "status": "ok",
+        "inference": "map" if args.fast else ("advi" if args.advi else "mcmc"),
+        "weeks": args.weeks,
+        "seed": args.seed,
+        "elapsed_seconds": round(elapsed_total, 2),
+        "output_dir": args.output_dir,
+        "used_real_data": bool(args.channel_csv),
+    }
+    os.makedirs(args.output_dir, exist_ok=True)
+    with open(os.path.join(args.output_dir, "pipeline_run_summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
+
     _section(f"PIPELINE COMPLETE  ({elapsed_total:.1f}s)")
     print(f"  Outputs → {args.output_dir}/")
+    print(f"  Run summary → {args.output_dir}/pipeline_run_summary.json")
     print()
 
 
