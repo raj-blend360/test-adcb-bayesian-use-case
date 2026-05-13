@@ -7,6 +7,10 @@ numpy>=2.0
 pymc>=5.10.0
 pytensor>=2.26.0
 arviz>=0.18.0
+numpyro>=0.15.0
+# JAX CPU runtime for NumPyro (works on Windows/Linux/macOS)
+jax>=0.4.30
+jaxlib>=0.4.30
 scipy>=1.13.0
 pandas>=2.2.0,<3.0
 matplotlib>=3.8.0
