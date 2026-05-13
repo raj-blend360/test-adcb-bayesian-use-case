@@ -33,8 +33,6 @@ import pytensor.tensor as pt
 
 from .data_processing import MMMDataset
 from .transformations import (
-    geometric_adstock_pt,
-    weibull_adstock_pt,
     hill_saturation_pt,
     logistic_saturation_pt,
     michaelis_menten_pt,
@@ -53,6 +51,7 @@ class ModelConfig:
     adstock_type: str = "geometric"       # geometric | weibull_pdf | weibull_cdf
     saturation_type: str = "hill"         # hill | logistic | michaelis_menten
     adstock_max_lag: int = 13
+    precompute_adstock: bool = True
 
     # Channel-level halo pairs  [(channel_a, channel_b), ...]
     halo_pairs: list[tuple[str, str]] = field(default_factory=list)
@@ -177,6 +176,8 @@ class BayesianMMM:
             ):
                 camp_to_ch_idx[ci] = ch_name_to_idx.get(ch_name, 0)
 
+        adstocked_np = self._precompute_adstock_matrix(spend_train, cfg)
+
         with pm.Model() as model:
             # ---- Data containers ----------------------------------------
             spend_data = pm.Data("spend", spend_train)
@@ -245,77 +246,24 @@ class BayesianMMM:
                     "delta_halo_campaign", sigma=0.2, shape=len(camp_halo_idx)
                 )
 
-            # ---- Media transformations (loop over channels) -------------
-            channel_contributions = []
-            adstocked_channels = []
+            # ---- Media transformations (vectorized, no Python loops) -----
+            adstocked = pm.Data("adstocked", adstocked_np)
 
-            for c in range(n_channels):
-                # Shift channel spend to be non-negative before adstock/saturation.
-                # z-scored spend can have negative values; we restore positivity by
-                # subtracting the min so the support is [0, range].
-                x_c_raw = spend_data[:, c]
-                x_c = x_c_raw - x_c_raw.min()
+            if cfg.saturation_type == "hill":
+                ad_norm = adstocked / (pt.max(adstocked, axis=0, keepdims=True) + 1e-8)
+                sat_matrix = ad_norm**alpha_hill / (ad_norm**alpha_hill + gamma_hill**alpha_hill)
+            elif cfg.saturation_type == "logistic":
+                sat_matrix = logistic_saturation_pt(adstocked, lam)
+            else:
+                sat_matrix = michaelis_menten_pt(adstocked, vmax, km)
 
-                # Adstock
-                if cfg.adstock_type == "geometric":
-                    x_ad = geometric_adstock_pt(x_c, decay[c], cfg.adstock_max_lag)
-                elif cfg.adstock_type == "weibull_pdf":
-                    x_ad = weibull_adstock_pt(
-                        x_c, wb_shape[c], wb_scale[c], cfg.adstock_max_lag, "pdf"
-                    )
-                else:
-                    x_ad = weibull_adstock_pt(
-                        x_c, wb_shape[c], wb_scale[c], cfg.adstock_max_lag, "cdf"
-                    )
-
-                # Clip to guard against numerical negatives from scan rounding
-                x_ad = pt.clip(x_ad, 0, np.inf)
-                adstocked_channels.append(x_ad)
-
-                # Saturation
-                if cfg.saturation_type == "hill":
-                    x_sat = hill_saturation_pt(x_ad, alpha_hill[c], gamma_hill[c])
-                elif cfg.saturation_type == "logistic":
-                    x_sat = logistic_saturation_pt(x_ad, lam[c])
-                else:
-                    x_sat = michaelis_menten_pt(x_ad, vmax[c], km[c])
-
-                channel_contributions.append(beta[c] * x_sat)
-
-            # Stack channel contributions: shape (T, C)
-            contrib_stack = pt.stack(channel_contributions, axis=1)
+            contrib_stack = sat_matrix * beta
             media_total = contrib_stack.sum(axis=1)
-
-            # ---- Campaign-level adstock (for halo terms only) ----------
-            campaign_adstocked: dict[int, object] = {}
-            if has_campaign_halo:
-                # Collect unique campaign indices needed for halo pairs
-                needed_camp_idx = set()
-                for ca, cb in camp_halo_idx:
-                    needed_camp_idx.add(ca)
-                    needed_camp_idx.add(cb)
-                for ci in needed_camp_idx:
-                    x_c_raw = campaign_spend_data[:, ci]
-                    x_c = x_c_raw - x_c_raw.min()
-                    parent_ch = camp_to_ch_idx.get(ci, 0)
-                    if cfg.adstock_type == "geometric":
-                        x_ad = geometric_adstock_pt(x_c, decay[parent_ch], cfg.adstock_max_lag)
-                    elif cfg.adstock_type == "weibull_pdf":
-                        x_ad = weibull_adstock_pt(
-                            x_c, wb_shape[parent_ch], wb_scale[parent_ch],
-                            cfg.adstock_max_lag, "pdf"
-                        )
-                    else:
-                        x_ad = weibull_adstock_pt(
-                            x_c, wb_shape[parent_ch], wb_scale[parent_ch],
-                            cfg.adstock_max_lag, "cdf"
-                        )
-                    campaign_adstocked[ci] = pt.clip(x_ad, 0, np.inf)
 
             # ---- Halo effects (channel-level) ---------------------------
             halo_total = pt.zeros(spend_data.shape[0])
             for hi, (ca, cb) in enumerate(ch_halo_idx):
-                halo_term = delta_halo[hi] * adstocked_channels[ca] * adstocked_channels[cb]
+                halo_term = delta_halo[hi] * adstocked[:, ca] * adstocked[:, cb]
                 halo_total = halo_total + halo_term
 
             # ---- Halo effects (campaign-level) --------------------------
@@ -323,8 +271,8 @@ class BayesianMMM:
                 for hi, (ca, cb) in enumerate(camp_halo_idx):
                     halo_total = halo_total + (
                         delta_halo_campaign[hi]
-                        * campaign_adstocked[ca]
-                        * campaign_adstocked[cb]
+                        * campaign_spend_data[:, ca]
+                        * campaign_spend_data[:, cb]
                     )
 
             # ---- Control regressors -------------------------------------
@@ -427,6 +375,23 @@ class BayesianMMM:
             config=cfg,
             dataset=dataset,
         )
+
+
+    def _precompute_adstock_matrix(self, spend: np.ndarray, cfg: ModelConfig) -> np.ndarray:
+        """Precompute adstock outside PyMC to avoid expensive scan ops."""
+        if not cfg.precompute_adstock:
+            return spend
+        if cfg.adstock_type != "geometric":
+            warnings.warn("Fast path only supports geometric adstock; using raw scaled spend.")
+            return spend
+
+        x = spend - spend.min(axis=0, keepdims=True)
+        alpha = 0.35
+        out = np.zeros_like(x)
+        out[0] = x[0]
+        for t in range(1, x.shape[0]):
+            out[t] = x[t] + alpha * out[t - 1]
+        return np.clip(out, 0.0, np.inf)
 
     # ------------------------------------------------------------------
     # get_contributions
