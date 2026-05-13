@@ -46,9 +46,15 @@ export default function TransformPage() {
 
   useEffect(() => {
     if (colData?.channels) {
-      setChannelConfigs(colData.channels.map(defaultChannelConfig))
+      const defaultMetric = availableMetrics.includes('clicks')
+        ? 'clicks'
+        : (availableMetrics[0] ?? 'media_spend')
+      setChannelConfigs(colData.channels.map((channel: string) => ({
+        ...defaultChannelConfig(channel),
+        metric: defaultMetric,
+      })))
     }
-  }, [colData])
+  }, [colData, availableMetrics])
 
   const saveMutation = useMutation({
     mutationFn: (config: any) => saveTransformConfig(config),
