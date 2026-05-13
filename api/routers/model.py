@@ -25,6 +25,28 @@ router = APIRouter(prefix="/model", tags=["model"])
 IDATA_DIR = "idata"
 os.makedirs(IDATA_DIR, exist_ok=True)
 
+FIT_SPEED_PRESETS = {
+    "fast": {
+        "inference_method": "map",
+        "samples": 100,
+        "tune": 100,
+        "chains": 1,
+        "halo_pairs": [],
+    },
+    "standard": {
+        "inference_method": "map",
+        "samples": 1000,
+        "tune": 1000,
+        "chains": 2,
+    },
+    "thorough": {
+        "inference_method": "mcmc",
+        "samples": 3000,
+        "tune": 2000,
+        "chains": 4,
+    },
+}
+
 
 def _build_model_config(req: FitRequest, dataset) -> ModelConfig:
     channel_halo = []
@@ -110,6 +132,15 @@ def _apply_channel_input_metrics(
     return out_df, metric_by_channel
 
 
+def _resolve_fit_request(req: FitRequest) -> FitRequest:
+    if not req.fit_speed:
+        return req
+    preset = FIT_SPEED_PRESETS.get(req.fit_speed)
+    if not preset:
+        return req
+    return req.model_copy(update=preset)
+
+
 def _run_fit(run_id: int, req_dict: dict):
     from api.database import SessionLocal
     db = SessionLocal()
@@ -118,7 +149,7 @@ def _run_fit(run_id: int, req_dict: dict):
         run.status = "running"
         db.commit()
 
-        req = FitRequest(**req_dict)
+        req = _resolve_fit_request(FitRequest(**req_dict))
         session = db.get(Session, req.session_id)
         if not session or not session.channel_csv_path:
             raise ValueError("Session or channel CSV not found")
@@ -133,6 +164,17 @@ def _run_fit(run_id: int, req_dict: dict):
         print("[Transform] Channel input metrics:", metric_by_channel or "default media_spend for all channels")
         print(f"[Transform] Global max adstock lag: {req.adstock_max_lag} weeks")
         print("[Transform] Beta prior: Normal(0, 0.3), non-centered parameterization enabled")
+        print(
+            "[Fit] Effective settings:",
+            {
+                "fit_speed": req.fit_speed or "custom",
+                "draws": req.samples,
+                "tune": req.tune,
+                "chains": req.chains,
+                "inference_method": req.inference_method,
+                "halo_count": len(req.halo_pairs),
+            },
+        )
 
         dc = DataConfig(
             include_seasonality=transform_config.get("include_seasonality", True),
