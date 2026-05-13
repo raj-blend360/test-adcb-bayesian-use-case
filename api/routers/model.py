@@ -111,7 +111,7 @@ def _apply_channel_input_metrics(
     """For each channel, replace media_spend with configured input metric."""
     cfg_channels = transform_config.get("channels", []) or []
     metric_by_channel = {
-        ch_cfg.get("channel"): ch_cfg.get("metric", "media_spend")
+        ch_cfg.get("channel"): ch_cfg.get("metric", "clicks")
         for ch_cfg in cfg_channels
         if ch_cfg.get("channel")
     }
@@ -123,7 +123,7 @@ def _apply_channel_input_metrics(
         if metric == "media_spend":
             continue
         if metric not in out_df.columns:
-            print(f"[Transform] Channel '{ch}': metric '{metric}' missing, keeping media_spend.")
+            print(f"[Transform] Channel '{ch}': metric '{metric}' missing, keeping clicks/media_spend fallback.")
             continue
         mask = out_df["channel"] == ch
         out_df.loc[mask, "media_spend"] = pd.to_numeric(
@@ -161,7 +161,7 @@ def _run_fit(run_id: int, req_dict: dict):
         # Parse transform config
         transform_config = json.loads(session.config_json) if session.config_json else {}
         channel_df, metric_by_channel = _apply_channel_input_metrics(channel_df, transform_config)
-        print("[Transform] Channel input metrics:", metric_by_channel or "default media_spend for all channels")
+        print("[Transform] Channel input metrics:", metric_by_channel or "default clicks for all channels")
         print(f"[Transform] Global max adstock lag: {req.adstock_max_lag} weeks")
         print("[Transform] Beta prior: Normal(0, 0.3), non-centered parameterization enabled")
         print(

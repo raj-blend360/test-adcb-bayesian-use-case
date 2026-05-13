@@ -18,7 +18,7 @@ function defaultChannelConfig(channel: string) {
     channel,
     adstock: { adstock_type: 'geometric', max_lag: 4, decay_prior_mean: 0.5 },
     saturation: { saturation_type: 'hill', alpha_prior_mean: 2.0, lambda_prior_mean: 0.5 },
-    metric: 'media_spend',
+    metric: 'clicks',
   }
 }
 
@@ -46,9 +46,15 @@ export default function TransformPage() {
 
   useEffect(() => {
     if (colData?.channels) {
-      setChannelConfigs(colData.channels.map(defaultChannelConfig))
+      const defaultMetric = availableMetrics.includes('clicks')
+        ? 'clicks'
+        : (availableMetrics[0] ?? 'media_spend')
+      setChannelConfigs(colData.channels.map((channel: string) => ({
+        ...defaultChannelConfig(channel),
+        metric: defaultMetric,
+      })))
     }
-  }, [colData])
+  }, [colData, availableMetrics])
 
   const saveMutation = useMutation({
     mutationFn: (config: any) => saveTransformConfig(config),
