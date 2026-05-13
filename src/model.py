@@ -192,9 +192,8 @@ class BayesianMMM:
             n_controls = dataset.n_controls
 
             # ---- Channel-level priors -----------------------------------
-            beta_mu = pm.Normal("beta_mu", mu=0.0, sigma=cfg.beta_prior_sigma)
             beta_z = pm.Normal("beta_z", mu=0.0, sigma=1.0, shape=n_channels)
-            beta = pm.Deterministic("beta", beta_mu + cfg.beta_prior_sigma * beta_z)
+            beta = pm.Deterministic("beta", 0.0 + cfg.beta_prior_sigma * beta_z)
 
             # Adstock parameters
             if cfg.adstock_type == "geometric":

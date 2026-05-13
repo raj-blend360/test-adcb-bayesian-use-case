@@ -75,6 +75,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--nuts-init", default="jitter+adapt_diag", dest="nuts_init",
                    help="NUTS initialization strategy")
     p.add_argument("--weeks", type=int, default=104, help="Synthetic dataset weeks")
+    p.add_argument("--channel-inputs", nargs="*", default=[], dest="channel_inputs",
+                   help="Per-channel input metric as Channel:metric (metric in {impressions,clicks,spends})")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
     p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30% bounds")
@@ -142,6 +144,43 @@ def _resolve_halo_from_args(args) -> tuple[list, list, float]:
         return ch_pairs, [], args.min_halo_spend
 
 
+def _parse_channel_inputs(raw: list[str]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    valid = {"impressions", "clicks", "spends"}
+    for item in raw:
+        if ":" not in item:
+            continue
+        channel, metric = item.split(":", 1)
+        channel = channel.strip()
+        metric = metric.strip().lower()
+        if channel and metric in valid:
+            mapping[channel] = metric
+    return mapping
+
+
+def _apply_channel_inputs(channel_df: pd.DataFrame, mapping: dict[str, str]) -> tuple[pd.DataFrame, dict[str, str]]:
+    df = channel_df.copy()
+    used: dict[str, str] = {}
+    if "media_input" not in df.columns:
+        df["media_input"] = df["media_spend"]
+
+    col_map = {"spends": "media_spend", "clicks": "clicks", "impressions": "impressions"}
+    for ch in sorted(df["channel"].unique()):
+        metric = mapping.get(ch, "spends")
+        src_col = col_map[metric]
+        if src_col not in df.columns:
+            print(f"  [warn] Channel '{ch}' requested '{metric}' but '{src_col}' is missing. Falling back to spends.")
+            metric = "spends"
+            src_col = "media_spend"
+        mask = df["channel"] == ch
+        df.loc[mask, "media_input"] = (
+            pd.to_numeric(df.loc[mask, src_col], errors="coerce").fillna(0.0).clip(lower=0.0)
+        )
+        used[ch] = metric
+
+    return df, used
+
+
 # ---------------------------------------------------------------------------
 # Pipeline steps
 # ---------------------------------------------------------------------------
@@ -198,7 +237,11 @@ def step_load_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
 def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -> "MMMDataset":
     _section("STEP 2: Data Pre-processing")
 
+    requested_inputs = _parse_channel_inputs(args.channel_inputs)
+    channel_df, used_inputs = _apply_channel_inputs(channel_df, requested_inputs)
+
     cfg = DataConfig(
+        spend_col="media_input",
         test_weeks=12,
         scale_spend=True,
         scale_target=True,
@@ -215,6 +258,13 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     print(f"  Controls      : {dataset.n_controls}  → {dataset.control_names[:4]}…")
     print(f"  Train weeks   : {dataset.train_mask.sum()}")
     print(f"  Test weeks    : {dataset.test_mask.sum()}")
+    print("  Input metric by channel:")
+    for ch in dataset.channel_names:
+        print(f"    {ch:<20} {used_inputs.get(ch, 'spends')}")
+    print("  Transformations applied:")
+    print(f"    spend scaling         : {'ON' if cfg.scale_spend else 'OFF'}")
+    print(f"    target scaling        : {'ON' if cfg.scale_target else 'OFF'}")
+    print(f"    seasonality features  : {'ON' if cfg.include_seasonality else 'OFF'}")
     return dataset
 
 
@@ -264,7 +314,8 @@ def step_fit_model(dataset, args) -> "MMMResults":
     cfg = ModelConfig(
         adstock_type="geometric",
         saturation_type="hill",
-        adstock_max_lag=13,
+        adstock_max_lag=8,
+        beta_prior_sigma=0.3,
         halo_pairs=ch_halo_pairs,
         campaign_halo_pairs=camp_halo_pairs,
         min_halo_spend=min_halo_spend,
@@ -280,7 +331,7 @@ def step_fit_model(dataset, args) -> "MMMResults":
     )
 
     print(f"  Inference          : {inference}")
-    print(f"  Adstock            : geometric (max_lag=13)")
+    print(f"  Adstock            : geometric (max_lag=8)")
     print(f"  Saturation         : Hill")
     print(f"  Channel halo pairs : {ch_halo_pairs}")
     print(f"  Campaign halo pairs: {camp_halo_pairs}")
