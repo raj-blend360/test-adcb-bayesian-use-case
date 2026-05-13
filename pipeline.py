@@ -158,12 +158,12 @@ def step_generate_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
 def step_load_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
     _section("STEP 1: Load Real Data")
     channel_df = pd.read_csv(args.channel_csv)
-    channel_df["date"] = pd.to_datetime(channel_df["date"])
+    channel_df["date"] = pd.to_datetime(channel_df["date"],, format='%d-%m-%Y')
 
     campaign_df = None
     if args.campaign_csv:
         campaign_df = pd.read_csv(args.campaign_csv)
-        campaign_df["date"] = pd.to_datetime(campaign_df["date"])
+        campaign_df["date"] = pd.to_datetime(campaign_df["date"],, format='%d-%m-%Y')
         print(f"  Campaign rows : {len(campaign_df):,}")
 
     os.makedirs(args.output_dir, exist_ok=True)
