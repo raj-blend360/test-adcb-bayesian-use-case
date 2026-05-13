@@ -120,10 +120,10 @@ def _apply_channel_input_metrics(
 
     out_df = channel_df.copy()
     for ch, metric in metric_by_channel.items():
-        if metric == "media_spend":
-            continue
         if metric not in out_df.columns:
-            print(f"[Transform] Channel '{ch}': metric '{metric}' missing, keeping clicks/media_spend fallback.")
+            print(f"[Transform] Channel '{ch}': metric '{metric}' missing; fallback to clicks/media_spend.")
+            metric = "clicks" if "clicks" in out_df.columns else "media_spend"
+        if metric == "media_spend":
             continue
         mask = out_df["channel"] == ch
         out_df.loc[mask, "media_spend"] = pd.to_numeric(

@@ -166,12 +166,16 @@ def _apply_channel_inputs(channel_df: pd.DataFrame, mapping: dict[str, str]) -> 
 
     col_map = {"spends": "media_spend", "clicks": "clicks", "impressions": "impressions"}
     for ch in sorted(df["channel"].unique()):
-        metric = mapping.get(ch, "spends")
+        metric = mapping.get(ch, "clicks")
         src_col = col_map[metric]
         if src_col not in df.columns:
-            print(f"  [warn] Channel '{ch}' requested '{metric}' but '{src_col}' is missing. Falling back to spends.")
-            metric = "spends"
-            src_col = "media_spend"
+            print(f"  [warn] Channel '{ch}' requested '{metric}' but '{src_col}' is missing. Falling back to clicks/spends.")
+            if "clicks" in df.columns:
+                metric = "clicks"
+                src_col = "clicks"
+            else:
+                metric = "spends"
+                src_col = "media_spend"
         mask = df["channel"] == ch
         df.loc[mask, "media_input"] = (
             pd.to_numeric(df.loc[mask, src_col], errors="coerce").fillna(0.0).clip(lower=0.0)
@@ -260,7 +264,7 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     print(f"  Test weeks    : {dataset.test_mask.sum()}")
     print("  Input metric by channel:")
     for ch in dataset.channel_names:
-        print(f"    {ch:<20} {used_inputs.get(ch, 'spends')}")
+        print(f"    {ch:<20} {used_inputs.get(ch, 'clicks')}")
     print("  Transformations applied:")
     print(f"    spend scaling         : {'ON' if cfg.scale_spend else 'OFF'}")
     print(f"    target scaling        : {'ON' if cfg.scale_target else 'OFF'}")
