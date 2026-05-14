@@ -89,15 +89,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-halo-spend", type=float, default=0.0, dest="min_halo_spend", help="Minimum total campaign spend to be eligible as halo candidate (raw currency units)")
     p.add_argument("--halo-top-n", type=int, default=10, dest="halo_top_n", help="Number of top halo candidates to print in analysis step")
     p.add_argument("--output-dir", default="outputs", help="Directory for saved outputs")
+    p.add_argument("--input-csv", default=None, dest="input_csv",
+                   help="Path to user input CSV (single file, wide or long format; skips synthetic data generation)")
     p.add_argument("--channel-csv", default=None, dest="channel_csv",
-                   help="Path to channel-level CSV (skips synthetic data generation)")
+                   help="[Deprecated] Path to channel-level CSV. Use --input-csv instead.")
     p.add_argument("--campaign-csv", default=None, dest="campaign_csv",
-                   help="Path to campaign-level CSV (optional, enables campaign-level halo effects)")
+                   help="Optional campaign-level CSV (only needed for campaign-level halo effects)")
     p.add_argument(
         "--date-format",
         default="%d-%m-%Y",
         dest="date_format",
-        help="Date parsing format for input CSV files (used with --channel-csv/--campaign-csv)",
+        help="Date parsing format for input CSV files (used with --input-csv/--campaign-csv)",
     )
     return p.parse_args()
 
@@ -188,13 +190,17 @@ def _apply_channel_inputs(channel_df: pd.DataFrame, mapping: dict[str, str]) -> 
 
 
 def _normalize_channel_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
-    """Accept either long-format or wide-format channel input and return long-format.
+    """Accept either long-format or wide-format input and return channel long-format.
 
     Supported wide columns include patterns such as:
       - spends_<channel>
       - media_impressions_<channel>
       - media_clicks_<channel>
       - exogenous_<control_name>
+
+    Example expected row shape:
+      date, spends_channel1, media_impressions_channel1, media_clicks_channel1,
+      exogenous_holiday_flag, exogenous_event1
     """
     df = raw_df.copy()
     if "date" not in df.columns:
@@ -284,10 +290,13 @@ def step_generate_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def step_load_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
     _section("STEP 1: Load Real Data")
-    if not os.path.exists(args.channel_csv):
-        raise FileNotFoundError(f"Channel CSV not found: {args.channel_csv}")
+    input_csv = args.input_csv or args.channel_csv
+    if not input_csv:
+        raise ValueError("Provide --input-csv (preferred) or --channel-csv.")
+    if not os.path.exists(input_csv):
+        raise FileNotFoundError(f"Input CSV not found: {input_csv}")
 
-    channel_df = pd.read_csv(args.channel_csv)
+    channel_df = pd.read_csv(input_csv)
     channel_df = _normalize_channel_dataframe(channel_df)
     channel_df["date"] = pd.to_datetime(channel_df["date"], format=args.date_format)
 
@@ -653,7 +662,7 @@ def main() -> None:
 
     t_start = time.time()
 
-    if args.channel_csv:
+    if args.input_csv or args.channel_csv:
         campaign_df, channel_df = step_load_data(args)
     else:
         campaign_df, channel_df = step_generate_data(args)
@@ -687,7 +696,7 @@ def main() -> None:
         "seed": args.seed,
         "elapsed_seconds": round(elapsed_total, 2),
         "output_dir": args.output_dir,
-        "used_real_data": bool(args.channel_csv),
+        "used_real_data": bool(args.input_csv or args.channel_csv),
     }
     os.makedirs(args.output_dir, exist_ok=True)
     with open(os.path.join(args.output_dir, "pipeline_run_summary.json"), "w") as f:
