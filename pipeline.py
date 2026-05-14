@@ -294,8 +294,15 @@ def step_load_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
     if not os.path.exists(input_csv):
         raise FileNotFoundError(f"Input CSV not found: {input_csv}")
 
-    channel_df = pd.read_csv(input_csv)
-    channel_df = _normalize_channel_dataframe(channel_df)
+    raw_input_df = pd.read_csv(input_csv)
+    print("  Input columns :")
+    for col in raw_input_df.columns:
+        print(f"    - {col}")
+
+    channel_df = _normalize_channel_dataframe(raw_input_df)
+    print("  Normalized columns :")
+    for col in channel_df.columns:
+        print(f"    - {col}")
     channel_df["date"] = pd.to_datetime(channel_df["date"], format=args.date_format)
 
     campaign_df = None
@@ -325,12 +332,17 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     channel_df, used_inputs = _apply_channel_inputs(channel_df, requested_inputs)
 
     requested_controls: list[str] = []
-    for control_col in ["holiday_flag", "promo_flag"]:
-        if control_col in channel_df.columns:
-            # Keep only controls that have any non-zero signal.
-            control_values = pd.to_numeric(channel_df[control_col], errors="coerce").fillna(0.0)
-            if float(control_values.abs().sum()) > 0.0:
-                requested_controls.append(control_col)
+    reserved_cols = {"date", "channel", "media_spend", "media_input", "conversions", "impressions", "clicks", "campaign"}
+    candidate_control_cols = [
+        c for c in channel_df.columns
+        if c not in reserved_cols and (c.endswith("_flag") or c.startswith("exogenous_") or c.startswith("control_"))
+    ]
+    for control_col in candidate_control_cols:
+        control_values = pd.to_numeric(channel_df[control_col], errors="coerce").fillna(0.0)
+        if float(control_values.abs().sum()) > 0.0:
+            requested_controls.append(control_col)
+
+    print("  Requested control flags:", requested_controls or "none")
 
     cfg = DataConfig(
         spend_col="media_input",
