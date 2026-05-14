@@ -32,6 +32,20 @@ def _safe_mape(observed: np.ndarray, predicted: np.ndarray, min_denom_ratio: flo
     return float(np.mean(np.abs(observed - predicted) / denom) * 100)
 
 
+
+def _add_significance_flags(summary: pd.DataFrame) -> pd.DataFrame:
+    """Add significance flag based on HDI interval excluding zero."""
+    summary = summary.copy()
+    low_col = next((c for c in ["hdi_3%", "hdi_2.5%"] if c in summary.columns), None)
+    high_col = next((c for c in ["hdi_97%", "hdi_97.5%"] if c in summary.columns), None)
+    if low_col and high_col:
+        summary["significant"] = (summary[low_col] > 0) | (summary[high_col] < 0)
+        summary["significance_label"] = np.where(summary["significant"], "significant", "not_significant")
+    else:
+        summary["significant"] = False
+        summary["significance_label"] = "unknown"
+    return summary
+
 # ---------------------------------------------------------------------------
 # Convergence diagnostics
 # ---------------------------------------------------------------------------
@@ -63,6 +77,7 @@ def check_convergence(
         warnings.simplefilter("ignore")
         summary = az.summary(idata, round_to=4)
         summary = relabel_summary_index(summary, results.dataset)
+        summary = _add_significance_flags(summary)
 
     if is_map:
         print("  [NOTE] MAP inference: R-hat and ESS are not applicable for point estimates.")
