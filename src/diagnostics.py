@@ -22,6 +22,16 @@ from .data_processing import MMMDataset
 from .model import MMMResults
 
 
+def _safe_mape(observed: np.ndarray, predicted: np.ndarray, min_denom_ratio: float = 0.01) -> float:
+    """MAPE with denominator floor to avoid exploding errors near zero actuals."""
+    observed = np.asarray(observed, dtype=float)
+    predicted = np.asarray(predicted, dtype=float)
+    scale = float(np.mean(np.abs(observed))) if observed.size else 0.0
+    eps = max(1e-8, min_denom_ratio * scale)
+    denom = np.maximum(np.abs(observed), eps)
+    return float(np.mean(np.abs(observed - predicted) / denom) * 100)
+
+
 # ---------------------------------------------------------------------------
 # Convergence diagnostics
 # ---------------------------------------------------------------------------
@@ -246,7 +256,7 @@ def out_of_sample_validation(
         predicted = predicted_scaled
         observed = observed_scaled
 
-    mape = float(np.mean(np.abs((observed - predicted) / (observed + 1e-8))) * 100)
+    mape = _safe_mape(observed, predicted)
     rmse = float(np.sqrt(np.mean((observed - predicted) ** 2)))
     mae = float(np.mean(np.abs(observed - predicted)))
     ss_res = np.sum((observed - predicted) ** 2)
@@ -257,7 +267,7 @@ def out_of_sample_validation(
     train_actual = dataset.target_raw[dataset.train_mask]
     from .model import BayesianMMM
     train_pred = BayesianMMM(results.config).get_contributions(results)["total_predicted"]
-    train_mape = float(np.mean(np.abs((train_actual - train_pred) / (train_actual + 1e-8))) * 100)
+    train_mape = _safe_mape(train_actual, train_pred)
     train_ss_res = np.sum((train_actual - train_pred) ** 2)
     train_ss_tot = np.sum((train_actual - train_actual.mean()) ** 2)
     train_r2 = float(1 - train_ss_res / (train_ss_tot + 1e-8))

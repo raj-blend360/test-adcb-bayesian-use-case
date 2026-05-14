@@ -494,12 +494,18 @@ class BayesianMMM:
 
         total_unscaled = dataset.target_raw[train_mask]
         channel_totals = contrib_unscaled.sum(axis=0)
-        overall_total = channel_totals.sum() + float(np.mean(base_unscaled)) * T_train
+        positive_totals = np.clip(channel_totals, 0.0, np.inf)
+        media_total = float(positive_totals.sum())
 
-        channel_pct = {
-            ch: float(channel_totals[i] / (overall_total + 1e-8) * 100)
-            for i, ch in enumerate(dataset.channel_names)
-        }
+        # Report media mix shares as a normalized partition over channels only.
+        # This avoids >100% totals when baseline/control contributions are negative.
+        if media_total <= 1e-8:
+            channel_pct = {ch: 0.0 for ch in dataset.channel_names}
+        else:
+            channel_pct = {
+                ch: float(positive_totals[i] / media_total * 100)
+                for i, ch in enumerate(dataset.channel_names)
+            }
 
         return {
             "base": base_unscaled,
