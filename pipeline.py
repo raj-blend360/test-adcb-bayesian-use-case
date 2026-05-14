@@ -249,13 +249,8 @@ def _normalize_channel_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     # Alias common user-provided exogenous names to model default control names
     if "holiday_flag" not in long_df.columns and "holiday_flag" in [c.replace("exogenous_", "", 1) for c in exo_cols]:
         pass
-    if "promo_flag" not in long_df.columns:
-        if "event1" in long_df.columns:
-            long_df["promo_flag"] = long_df["event1"]
-        else:
-            long_df["promo_flag"] = 0.0
-    if "holiday_flag" not in long_df.columns:
-        long_df["holiday_flag"] = 0.0
+    if "promo_flag" not in long_df.columns and "event1" in long_df.columns:
+        long_df["promo_flag"] = long_df["event1"]
 
     # Conversions are required by downstream pipeline; default to 0 if not provided.
     if "conversions" in df.columns:
@@ -329,6 +324,14 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     requested_inputs = _parse_channel_inputs(args.channel_inputs)
     channel_df, used_inputs = _apply_channel_inputs(channel_df, requested_inputs)
 
+    requested_controls: list[str] = []
+    for control_col in ["holiday_flag", "promo_flag"]:
+        if control_col in channel_df.columns:
+            # Keep only controls that have any non-zero signal.
+            control_values = pd.to_numeric(channel_df[control_col], errors="coerce").fillna(0.0)
+            if float(control_values.abs().sum()) > 0.0:
+                requested_controls.append(control_col)
+
     cfg = DataConfig(
         spend_col="media_input",
         test_weeks=12,
@@ -337,7 +340,7 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
         include_seasonality=True,
         seasonality_periods=[52.0, 26.0],
         n_harmonics=2,
-        control_cols=["holiday_flag", "promo_flag"],
+        control_cols=requested_controls,
     )
     processor = DataProcessor(cfg)
     dataset = processor.prepare(channel_df, campaign_df=campaign_df)
