@@ -638,3 +638,89 @@ def plot_waterfall_decomposition(
     plt.tight_layout()
     _save(fig, save_path)
     return fig
+
+
+def plot_media_vs_base_contribution(
+    contributions: dict,
+    save_path: Optional[str] = None,
+    figsize: tuple = (8, 5),
+) -> plt.Figure:
+    """Two-bar chart for total Media vs Base contribution share."""
+    contrib_df = contributions["channels"]
+    channels = [c for c in contrib_df.columns if c not in ("base", "controls")]
+
+    base_total = float(contrib_df["base"].sum())
+    media_total = float(contrib_df[channels].sum().sum()) if channels else 0.0
+    total = base_total + media_total
+    if total <= 0:
+        base_pct = media_pct = 0.0
+    else:
+        base_pct = (base_total / total) * 100.0
+        media_pct = (media_total / total) * 100.0
+
+    labels = ["Media", "Base"]
+    values = [media_pct, base_pct]
+    fig, ax = plt.subplots(figsize=figsize)
+    bars = ax.bar(labels, values, color=[PALETTE[0], PALETTE[1]], alpha=0.9)
+    ax.set_ylim(0, max(100, max(values) * 1.2 if values else 100))
+    ax.set_ylabel("Contribution Share (%)")
+    ax.set_title("Media vs Base Contribution", fontsize=12, fontweight="bold")
+    ax.grid(axis="y", alpha=0.3)
+
+    for bar, val in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 1.0,
+            f"{val:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    plt.tight_layout()
+    _save(fig, save_path)
+    return fig
+
+
+def plot_channel_contribution_share(
+    contributions: dict,
+    save_path: Optional[str] = None,
+    figsize: tuple = (10, 6),
+) -> plt.Figure:
+    """Bar chart of channel-wise contribution share (% of total media contribution)."""
+    contrib_df = contributions["channels"]
+    channels = [c for c in contrib_df.columns if c not in ("base", "controls")]
+
+    channel_totals = pd.Series({ch: float(contrib_df[ch].sum()) for ch in channels}).sort_values(ascending=False)
+    media_total = float(channel_totals.sum())
+    if media_total <= 0:
+        pct = pd.Series(0.0, index=channel_totals.index)
+    else:
+        pct = (channel_totals / media_total) * 100.0
+
+    fig, ax = plt.subplots(figsize=figsize)
+    colors = [PALETTE[i % len(PALETTE)] for i in range(len(pct))]
+    labels = pct.index.tolist()
+    values = pct.values.tolist()
+    x = np.arange(len(labels))
+    bars = ax.bar(x, values, color=colors, alpha=0.9)
+    ax.set_ylabel("Contribution Share (%)")
+    ax.set_title("Channel-wise Media Contribution Share", fontsize=12, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=30, ha="right")
+    ax.grid(axis="y", alpha=0.3)
+
+    for bar, val in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.6,
+            f"{val:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
+    plt.tight_layout()
+    _save(fig, save_path)
+    return fig
