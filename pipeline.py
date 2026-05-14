@@ -83,6 +83,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
     p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30%% bounds")
     p.add_argument("--target", type=float, default=None, help="Target conversions for reverse optimization")
+    p.add_argument(
+        "--optimization-level",
+        choices=["monthly", "annual"],
+        default="annual",
+        dest="optimization_level",
+        help="Budget optimization horizon used for spend scaling and optimizer outputs.",
+    )
     p.add_argument("--freeze", nargs="*", default=[], help="Channels to freeze (e.g. --freeze TV OOH)")
     p.add_argument("--halo", nargs="*", default=None, help="Channel-level halo pairs e.g. TV,Digital Radio,Digital (overridden by --halo-config)")
     p.add_argument("--halo-config", default=None, dest="halo_config", help="Path to halo_config.json with channel- and campaign-level halo pairs")
@@ -492,6 +499,7 @@ def step_diagnostics(results, args) -> dict:
     try:
         oos = out_of_sample_validation(results)
         print(f"\n  OOS MAPE: {oos['mape']:.2f}%  |  R²: {oos['r2']:.4f}")
+        print(f"  Train WMAPE: {oos['train_wmape']:.2f}%")
     except Exception as e:
         oos = None
         print(f"  OOS validation skipped: {e}")
@@ -515,12 +523,14 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
         )
     )
 
-    current_spend = dataset.spend_raw.mean(axis=0)  # average weekly spend per channel
-    # Annualise
-    annual_spend = current_spend * 52
-    total_budget = annual_spend.sum()
+    current_spend_weekly = dataset.spend_raw.mean(axis=0)  # average weekly spend per channel
+    period_factor = 12 if args.optimization_level == "monthly" else 52
+    period_label = "monthly" if args.optimization_level == "monthly" else "annual"
+    current_spend_period = current_spend_weekly * period_factor
+    total_budget = current_spend_period.sum()
 
-    print(f"  Total annual budget : £{total_budget:,.0f}")
+    print(f"  Total {period_label} budget : £{total_budget:,.0f}")
+    print(f"  Optimization level  : {period_label}")
     print(f"  Frozen channels     : {args.freeze or 'none'}")
     print(f"  Bounds ±30%         : {'ON' if not args.no_bounds else 'OFF'}")
 
@@ -528,7 +538,7 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     opt_result = optimizer.optimize_budget(
         channel_params,
         total_budget,
-        annual_spend,
+        current_spend_period,
         campaign_df=campaign_df if campaign_df is not None and not campaign_df.empty else None,
     )
 
@@ -540,8 +550,34 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
 
     print("\n  Per-channel allocation:")
     alloc_df = opt_result.to_dataframe()
+    channel_current_conv = np.array(
+        [p.conversions(np.array([s]))[0] for p, s in zip(channel_params, opt_result.current_spend)]
+    )
+    channel_opt_conv = np.array(
+        [p.conversions(np.array([s]))[0] for p, s in zip(channel_params, opt_result.optimal_spend)]
+    )
+    conv_change_pct = (channel_opt_conv - channel_current_conv) / (channel_current_conv + 1e-8) * 100
+    alloc_df["current_conversions"] = channel_current_conv
+    alloc_df["optimal_conversions"] = channel_opt_conv
+    alloc_df["conversion_change_pct"] = conv_change_pct
     print(alloc_df[["current_spend", "optimal_spend", "spend_change_pct"]].to_string())
     alloc_df.to_csv(os.path.join(args.output_dir, "budget_allocation.csv"))
+    excel_df = pd.DataFrame(
+        {
+            "Channel": opt_result.channel_names,
+            "Avg Monthly Spend": current_spend_weekly * 4.34524,
+            "Optimised Spends": opt_result.optimal_spend,
+            "% Change in Spend": opt_result.spend_change_pct,
+            "Avg Conversions": channel_current_conv,
+            "Optimised Conversions": channel_opt_conv,
+            "% Change in Conversions": conv_change_pct,
+            "Optimization Level": args.optimization_level,
+        }
+    )
+    excel_path = os.path.join(args.output_dir, "optimization_results.xlsx")
+    with pd.ExcelWriter(excel_path) as writer:
+        excel_df.to_excel(writer, index=False, sheet_name="summary")
+        alloc_df.reset_index().to_excel(writer, index=False, sheet_name="allocation_detail")
 
     # Reverse optimization
     rev_result = None
@@ -555,7 +591,7 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     rev_result = optimizer.reverse_optimize(
         channel_params,
         target_conv,
-        annual_spend,
+        current_spend_period,
     )
     print(f"  Required total spend : £{rev_result.optimal_spend.sum():,.0f}")
     print(f"  Achieved conversions : {rev_result.optimal_conversions:,.1f}")
@@ -563,14 +599,14 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     rev_alloc_df.to_csv(os.path.join(args.output_dir, "reverse_allocation.csv"))
 
     # Marginal ROI table
-    marginal_df = optimizer.marginal_roi_table(channel_params, annual_spend)
+    marginal_df = optimizer.marginal_roi_table(channel_params, current_spend_period)
     print("\n  Marginal ROI at current spend:")
     print(marginal_df[["spend", "roi", "marginal_roi", "cost_per_conversion"]].to_string())
     marginal_df.to_csv(os.path.join(args.output_dir, "marginal_roi.csv"))
 
     # Efficient frontier
     frontier_df = optimizer.efficient_frontier(
-        channel_params, annual_spend, n_points=15
+        channel_params, current_spend_period, n_points=15
     )
     frontier_df.to_csv(os.path.join(args.output_dir, "efficient_frontier.csv"), index=False)
 
