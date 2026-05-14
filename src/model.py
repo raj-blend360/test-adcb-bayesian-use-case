@@ -444,28 +444,45 @@ class BayesianMMM:
             ).values
             ctrl_contrib = dataset.control_matrix[train_mask] @ gamma_mean
 
-        total_pred = base_mean + contrib_mean.sum(axis=1) + ctrl_contrib
+        # Keep every additive component in model-space first (scaled y-space).
+        # This avoids mixing scaled and unscaled variables.
+        base_scaled = np.full(T_train, base_mean, dtype=float)
+        media_scaled = contrib_mean
+        controls_scaled = ctrl_contrib
+        pred_scaled = base_scaled + media_scaled.sum(axis=1) + controls_scaled
 
         # Unscale if needed.
-        # StandardScaler: y_scaled = (y_raw - mean) / scale
-        # So: y_raw = y_scaled * scale + mean
-        # Decomposition: each component is multiplied by scale; mean is absorbed into base.
+        # StandardScaler: y_scaled = (y_raw - y_mean) / y_std
+        # So: y_raw = y_scaled * y_std + y_mean
+        # For decomposition:
+        #   base_raw[t] = base_scaled[t] * y_std + y_mean
+        #   channel_raw[t, c] = channel_scaled[t, c] * y_std
+        #   controls_raw[t] = controls_scaled[t] * y_std
+        # and predictions satisfy exactly:
+        #   pred_raw[t] = base_raw[t] + sum_c(channel_raw[t, c]) + controls_raw[t]
         scaler = dataset.target_scaler
         if scaler is not None:
-            sc = float(scaler.scale_[0])
-            mn = float(scaler.mean_[0])
-            # Channel contributions (additive components, no mean offset)
-            contrib_unscaled = contrib_mean * sc
-            # Base absorbs the global mean
-            base_unscaled_vec = base_mean * sc + mn
-            ctrl_unscaled = ctrl_contrib * sc
-            total_pred_unscaled = base_unscaled_vec + contrib_unscaled.sum(axis=1) + ctrl_unscaled
+            y_std = float(scaler.scale_[0])
+            y_mean = float(scaler.mean_[0])
+
+            contrib_unscaled = media_scaled * y_std
+            base_unscaled_vec = base_scaled * y_std + y_mean
+            ctrl_unscaled = controls_scaled * y_std
+            total_pred_unscaled = pred_scaled * y_std + y_mean
             base_unscaled = base_unscaled_vec
         else:
-            total_pred_unscaled = total_pred
-            contrib_unscaled = contrib_mean
-            base_unscaled = base_mean
-            ctrl_unscaled = ctrl_contrib
+            total_pred_unscaled = pred_scaled
+            contrib_unscaled = media_scaled
+            base_unscaled = base_scaled
+            ctrl_unscaled = controls_scaled
+
+        # Numerical consistency check for decomposition identity.
+        reconstructed = base_unscaled + contrib_unscaled.sum(axis=1) + ctrl_unscaled
+        if not np.allclose(reconstructed, total_pred_unscaled, atol=1e-6, rtol=1e-6):
+            warnings.warn(
+                "Contribution decomposition mismatch: base + channels + controls "
+                "does not reconstruct predictions within tolerance."
+            )
 
         contrib_df = pd.DataFrame(
             contrib_unscaled,
