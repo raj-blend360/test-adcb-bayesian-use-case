@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from .data_processing import MMMDataset
-from .model import MMMResults
+from .model import MMMResults, relabel_summary_index
 
 
 def _safe_mape(observed: np.ndarray, predicted: np.ndarray, min_denom_ratio: float = 0.01) -> float:
@@ -62,6 +62,7 @@ def check_convergence(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         summary = az.summary(idata, round_to=4)
+        summary = relabel_summary_index(summary, results.dataset)
 
     if is_map:
         print("  [NOTE] MAP inference: R-hat and ESS are not applicable for point estimates.")
@@ -178,7 +179,7 @@ def out_of_sample_validation(
     beta_mean = post["beta"].mean(("chain", "draw")).values  # (C,)
     base_mean = float(post["base"].mean(("chain", "draw")).values)
 
-    gamma_mean = post["gamma_hill"].mean(("chain", "draw")).values if cfg.apply_saturation and "gamma_hill" in post else None
+    gamma_mean = post["saturation"].mean(("chain", "draw")).values if cfg.apply_saturation and "saturation" in post else None
     decay_mean = post["decay"].mean(("chain", "draw")).values if cfg.apply_adstock and "decay" in post else None
 
     gamma_ctrl_mean = None
@@ -208,7 +209,7 @@ def out_of_sample_validation(
         if cfg.apply_saturation and gamma_mean is not None:
             x_train_max = x_full[dataset.train_mask].max() + 1e-8
             x_norm = x_ad_test / x_train_max
-            gh = float(gamma_mean[c])
+            gh = float(np.asarray(gamma_mean).reshape(-1)[0])
             sat = x_norm / (x_norm + gh + 1e-12)
         else:
             sat = x_ad_test
