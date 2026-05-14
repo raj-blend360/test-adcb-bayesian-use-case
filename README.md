@@ -43,7 +43,7 @@ python pipeline.py --fast
 
 ### Reverse-optimize for a target conversion count
 ```bash
-python pipeline.py --fast --target 60000
+python pipeline.py --fast --target 6000
 ```
 
 ### Freeze specific channels
@@ -106,6 +106,9 @@ Maximizes total conversions subject to:
 
 ### Reverse optimization
 Minimizes total spend to reach a target conversion count:
+- `--target` is interpreted as **raw conversions** (e.g., 6000)
+- Target is automatically rescaled into model units before optimization
+- Reported current / target / achieved conversions are converted back to raw units
 - No upper bounds (freely increases channels as needed)
 - Lower bound = 0 (cannot go negative)
 

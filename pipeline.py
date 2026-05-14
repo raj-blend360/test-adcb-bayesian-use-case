@@ -508,6 +508,22 @@ def step_diagnostics(results, args) -> dict:
     return conv_df, oos
 
 
+
+
+def _target_scale_factor(dataset) -> float:
+    scaler = getattr(dataset, "target_scaler", None)
+    if scaler is None:
+        return 1.0
+    return float(scaler.scale_[0])
+
+
+def _raw_to_model_conversions(raw_value: float, dataset) -> float:
+    return float(raw_value) / _target_scale_factor(dataset)
+
+
+def _model_to_raw_conversions(model_value: float, dataset) -> float:
+    return float(model_value) * _target_scale_factor(dataset)
+
 def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     _section("STEP 7: Budget Optimization")
 
@@ -581,21 +597,31 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
 
     # Reverse optimization
     rev_result = None
-    target_conv = args.target
-    if target_conv is None:
-        target_conv = opt_result.current_conversions * 1.20  # +20%
-        print(f"\n  Running reverse optimization for +20% target: {target_conv:,.0f} conversions")
+    current_conv_raw = _model_to_raw_conversions(opt_result.current_conversions, dataset)
+    if args.target is None:
+        target_conv_raw = current_conv_raw * 1.20  # +20%
+        print(f"\n  Running reverse optimization for +20% target: {target_conv_raw:,.0f} raw conversions")
     else:
-        print(f"\n  Running reverse optimization for target: {target_conv:,.0f} conversions")
+        target_conv_raw = float(args.target)
+        print(f"\n  Running reverse optimization for target: {target_conv_raw:,.0f} raw conversions")
 
+    target_conv_model = _raw_to_model_conversions(target_conv_raw, dataset)
     rev_result = optimizer.reverse_optimize(
         channel_params,
-        target_conv,
+        target_conv_model,
         current_spend_period,
     )
-    print(f"  Required total spend : £{rev_result.optimal_spend.sum():,.0f}")
-    print(f"  Achieved conversions : {rev_result.optimal_conversions:,.1f}")
+    achieved_conv_raw = _model_to_raw_conversions(rev_result.optimal_conversions, dataset)
+    print(f"  Reverse optimization success : {rev_result.success}")
+    print(f"  Reverse optimization message : {rev_result.message}")
+    print(f"  Current conversions (raw)    : {current_conv_raw:,.1f}")
+    print(f"  Target conversions (raw)     : {target_conv_raw:,.1f}")
+    print(f"  Achieved conversions (raw)   : {achieved_conv_raw:,.1f}")
+    print(f"  Required total spend         : £{rev_result.optimal_spend.sum():,.0f}")
     rev_alloc_df = rev_result.to_dataframe()
+    rev_alloc_df["current_conversions_raw"] = current_conv_raw
+    rev_alloc_df["target_conversions_raw"] = target_conv_raw
+    rev_alloc_df["achieved_conversions_raw"] = achieved_conv_raw
     rev_alloc_df.to_csv(os.path.join(args.output_dir, "reverse_allocation.csv"))
 
     # Marginal ROI table
