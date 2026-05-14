@@ -217,6 +217,11 @@ def _normalize_channel_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
             "(date, channel, media_spend, ...), or wide columns like 'spends_<channel>'."
         )
 
+    def _get_numeric_column_or_default(col_name: str) -> pd.Series:
+        if col_name in df.columns:
+            return pd.to_numeric(df[col_name], errors="coerce").fillna(0.0)
+        return pd.Series(0.0, index=df.index)
+
     channel_rows: list[pd.DataFrame] = []
     exo_cols = [c for c in df.columns if c.startswith("exogenous_")]
     for spend_col in spend_cols:
@@ -226,12 +231,10 @@ def _normalize_channel_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
                 "date": df["date"],
                 "channel": channel,
                 "media_spend": pd.to_numeric(df[spend_col], errors="coerce").fillna(0.0),
-                "impressions": pd.to_numeric(
-                    df.get(f"media_impressions_{channel}", 0.0), errors="coerce"
-                ).fillna(0.0),
-                "clicks": pd.to_numeric(
-                    df.get(f"media_clicks_{channel}", 0.0), errors="coerce"
-                ).fillna(0.0),
+                "impressions": _get_numeric_column_or_default(f"media_impressions_{channel}")
+                + _get_numeric_column_or_default(f"impressions_{channel}"),
+                "clicks": _get_numeric_column_or_default(f"media_clicks_{channel}")
+                + _get_numeric_column_or_default(f"clicks_{channel}"),
             }
         )
         channel_rows.append(temp)
