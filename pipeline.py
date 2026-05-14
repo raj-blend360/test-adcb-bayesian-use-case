@@ -666,11 +666,15 @@ def main() -> None:
     t_start = time.time()
 
     if args.input_csv or args.channel_csv:
+        # User-provided --input-csv is only used as input for the Bayesian MMM flow.
+        # We intentionally skip synthetic generation and optional halo candidate discovery
+        # so the provided file directly drives model fitting and downstream outputs.
         campaign_df, channel_df = step_load_data(args)
     else:
         campaign_df, channel_df = step_generate_data(args)
     dataset = step_preprocess(channel_df, campaign_df, args)
-    step_halo_analysis(dataset, args)
+    if not (args.input_csv or args.channel_csv):
+        step_halo_analysis(dataset, args)
     results, mmm = step_fit_model(dataset, args)
     contributions, roi_df = step_contributions(results, mmm, args)
     curves = step_response_curves(results, mmm, args)
