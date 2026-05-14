@@ -67,6 +67,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fast", action="store_true", help="Use MAP inference (fast, no uncertainty)")
     p.add_argument("--advi", action="store_true", help="Use ADVI variational inference")
     p.add_argument("--samples", type=int, default=500, help="MCMC draw count per chain")
+    p.add_argument("--no-adstock", action="store_true", help="Disable adstock transformation")
+    p.add_argument("--no-saturation", action="store_true", help="Disable saturation transformation")
     p.add_argument("--tune", type=int, default=500, help="MCMC tuning steps")
     p.add_argument("--chains", type=int, default=2, help="MCMC chain count")
     p.add_argument("--cores", type=int, default=None, help="CPU cores for parallel chains (default: PyMC auto)")
@@ -316,8 +318,8 @@ def step_fit_model(dataset, args) -> "MMMResults":
     inference = "map" if args.fast else ("advi" if args.advi else "mcmc")
 
     cfg = ModelConfig(
-        adstock_type="geometric",
-        saturation_type="hill",
+        apply_adstock=not args.no_adstock,
+        apply_saturation=not args.no_saturation,
         adstock_max_lag=8,
         beta_prior_sigma=0.3,
         halo_pairs=ch_halo_pairs,
@@ -335,8 +337,8 @@ def step_fit_model(dataset, args) -> "MMMResults":
     )
 
     print(f"  Inference          : {inference}")
-    print(f"  Adstock            : geometric (max_lag=8)")
-    print(f"  Saturation         : Hill")
+    print(f"  Adstock            : {'ON (geometric)' if cfg.apply_adstock else 'OFF'}")
+    print(f"  Saturation         : {'ON (Hill)' if cfg.apply_saturation else 'OFF'}")
     print(f"  Channel halo pairs : {ch_halo_pairs}")
     print(f"  Campaign halo pairs: {camp_halo_pairs}")
     if inference == "mcmc":

@@ -37,6 +37,45 @@ from .transformations import (
 )
 
 
+def format_posterior_label(param: str, dataset: MMMDataset, index: int | None = None) -> str:
+    """Create readable posterior labels with business names instead of array indices."""
+    if index is None:
+        return param
+
+    if param == "beta" and 0 <= index < len(dataset.channel_names):
+        return f"beta_{dataset.channel_names[index]}"
+
+    if param == "gamma_ctrl" and 0 <= index < len(dataset.control_names):
+        control_name = dataset.control_names[index]
+        if control_name.endswith("_flag") and len(dataset.dates) > index:
+            week_start = np.datetime_as_string(dataset.dates[index], unit="D")
+            return f"{control_name}_week_{week_start}"
+        return f"gamma_ctrl_{control_name}"
+
+    if param == "channel_contribs":
+        t = index // max(len(dataset.channel_names), 1)
+        c = index % max(len(dataset.channel_names), 1)
+        if 0 <= c < len(dataset.channel_names):
+            week_start = np.datetime_as_string(dataset.dates[min(t, len(dataset.dates) - 1)], unit="D")
+            return f"channel_contribs_{dataset.channel_names[c]}_week_{week_start}"
+
+    return f"{param}[{index}]"
+
+
+def relabel_summary_index(summary_df, dataset: MMMDataset):
+    new_index = []
+    for label in summary_df.index:
+        if "[" in label and label.endswith("]"):
+            base, idx_txt = label[:-1].split("[", 1)
+            if idx_txt.isdigit():
+                new_index.append(format_posterior_label(base, dataset, int(idx_txt)))
+                continue
+        new_index.append(label)
+    summary_df = summary_df.copy()
+    summary_df.index = new_index
+    return summary_df
+
+
 # ---------------------------------------------------------------------------
 # Model configuration
 # ---------------------------------------------------------------------------
@@ -78,8 +117,8 @@ class ModelConfig:
 
     # Prior scales
     beta_prior_sigma: float = 0.3
-    gamma_hill_alpha: float = 3.0
-    gamma_hill_beta: float = 3.0
+    saturation_alpha: float = 3.0
+    saturation_beta: float = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +151,10 @@ class MMMResults:
     @property
     def summary(self) -> "pd.DataFrame":
         import pandas as pd
-        vars_of_interest = ["beta", "gamma_hill", "decay"]
+        vars_of_interest = ["beta", "saturation", "decay"]
         vars_present = [v for v in vars_of_interest if v in self.idata.posterior]
-        return az.summary(self.idata, var_names=vars_present, round_to=4)
+        summary = az.summary(self.idata, var_names=vars_present, round_to=4)
+        return relabel_summary_index(summary, self.dataset)
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +237,7 @@ class BayesianMMM:
                 decay = pm.Beta("decay", alpha=3, beta=3)
 
             if cfg.apply_saturation:
-                gamma_hill = pm.Beta("gamma_hill", alpha=cfg.gamma_hill_alpha, beta=cfg.gamma_hill_beta, shape=n_channels)
+                saturation = pm.Beta("saturation", alpha=cfg.saturation_alpha, beta=cfg.saturation_beta)
 
             # ---- Control / seasonality priors ---------------------------
             if n_controls > 0:
@@ -225,7 +265,7 @@ class BayesianMMM:
 
             if cfg.apply_saturation:
                 ad_norm = adstocked / (pt.max(adstocked, axis=0, keepdims=True) + 1e-8)
-                sat_matrix = ad_norm / (ad_norm + gamma_hill + 1e-8)
+                sat_matrix = ad_norm / (ad_norm + saturation + 1e-8)
             else:
                 sat_matrix = adstocked
 
@@ -534,9 +574,9 @@ class BayesianMMM:
         beta_flat = beta_samples.reshape(-1, n_ch)
 
         # Flatten parameter tensors once to avoid repeated reshape + Python loops.
-        gamma_hill_flat = None
-        if cfg.apply_saturation and "gamma_hill" in post:
-            gamma_hill_flat = post["gamma_hill"].values.reshape(-1, n_ch)
+        saturation_flat = None
+        if cfg.apply_saturation and "saturation" in post:
+            saturation_flat = post["saturation"].values.reshape(-1, 1)
 
         curves = {}
         for c, ch in enumerate(dataset.channel_names):
@@ -546,10 +586,10 @@ class BayesianMMM:
             spend_grid = np.linspace(0, x_max, n_points)
 
             # Vectorized across posterior samples (rows) and spend grid points (cols).
-            if cfg.apply_saturation and gamma_hill_flat is not None:
+            if cfg.apply_saturation and saturation_flat is not None:
                 x_ref = raw_spend.max() + 1e-8
                 x_norm = spend_grid / x_ref
-                gh = gamma_hill_flat[:, c][:, None]
+                gh = saturation_flat
                 sat = x_norm[None, :] / (x_norm[None, :] + gh + 1e-12)
             else:
                 sat = np.broadcast_to(spend_grid[None, :], (beta_flat.shape[0], n_points))

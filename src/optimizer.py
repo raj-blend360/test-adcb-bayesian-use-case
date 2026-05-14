@@ -204,8 +204,8 @@ class BudgetOptimizer:
             beta = float(post["beta"].mean(("chain", "draw")).values[c])
             x_ref_max = float(dataset.spend_raw[:, c].max()) + 1e-8
 
-            if cfg.apply_saturation and "gamma_hill" in post:
-                gamma = float(post["gamma_hill"].mean(("chain", "draw")).values[c])
+            if cfg.apply_saturation and "saturation" in post:
+                gamma = float(np.asarray(post["saturation"].mean(("chain", "draw")).values).reshape(-1)[0])
                 cp = ChannelParams(name=ch, saturation_type="hill", gamma=gamma, beta=beta, x_ref_max=x_ref_max)
             else:
                 cp = ChannelParams(name=ch, saturation_type="hill", gamma=1.0, beta=beta, x_ref_max=1.0)
