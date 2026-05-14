@@ -70,6 +70,8 @@ class FitRequest(BaseModel):
     target_accept: float = 0.9
     halo_pairs: list[HaloPair] = []
     min_halo_spend: float = 0.0
+    apply_adstock: bool = True
+    apply_saturation: bool = True
     adstock_max_lag: int = Field(
         4,
         description=(

@@ -66,6 +66,8 @@ def _build_model_config(req: FitRequest, dataset) -> ModelConfig:
         halo_pairs=channel_halo,
         campaign_halo_pairs=campaign_halo,
         min_halo_spend=req.min_halo_spend,
+        apply_adstock=req.apply_adstock,
+        apply_saturation=req.apply_saturation,
         adstock_max_lag=req.adstock_max_lag,
     )
 

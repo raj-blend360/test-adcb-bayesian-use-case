@@ -34,8 +34,6 @@ import pytensor.tensor as pt
 from .data_processing import MMMDataset
 from .transformations import (
     hill_saturation_pt,
-    logistic_saturation_pt,
-    michaelis_menten_pt,
 )
 
 
@@ -48,8 +46,8 @@ class ModelConfig:
     """Configuration for the Bayesian MMM."""
 
     # Transformations
-    adstock_type: str = "geometric"       # geometric | weibull_pdf | weibull_cdf
-    saturation_type: str = "hill"         # hill | logistic | michaelis_menten
+    apply_adstock: bool = True
+    apply_saturation: bool = True
     adstock_max_lag: int = 13
     precompute_adstock: bool = True
 
@@ -194,21 +192,12 @@ class BayesianMMM:
             beta_z = pm.Normal("beta_z", mu=0.0, sigma=1.0, shape=n_channels)
             beta = pm.Deterministic("beta", 0.0 + cfg.beta_prior_sigma * beta_z)
 
-            # Adstock parameters
-            if cfg.adstock_type == "geometric":
+            # Single optional media-transformation parameters
+            if cfg.apply_adstock:
                 decay = pm.Beta("decay", alpha=3, beta=3)
-            else:
-                wb_shape = pm.Gamma("wb_shape", alpha=2, beta=1, shape=n_channels)
-                wb_scale = pm.Gamma("wb_scale", alpha=3, beta=1, shape=n_channels)
 
-            # Saturation parameters
-            if cfg.saturation_type == "hill":
+            if cfg.apply_saturation:
                 gamma_hill = pm.Beta("gamma_hill", alpha=cfg.gamma_hill_alpha, beta=cfg.gamma_hill_beta, shape=n_channels)
-            elif cfg.saturation_type == "logistic":
-                lam = pm.HalfNormal("lam", sigma=1.0, shape=n_channels)
-            else:  # michaelis_menten
-                vmax = pm.HalfNormal("vmax", sigma=2.0, shape=n_channels)
-                km = pm.HalfNormal("km", sigma=1.0, shape=n_channels)
 
             # ---- Control / seasonality priors ---------------------------
             if n_controls > 0:
@@ -234,13 +223,11 @@ class BayesianMMM:
             # ---- Media transformations (vectorized, no Python loops) -----
             adstocked = pm.Data("adstocked", adstocked_np)
 
-            if cfg.saturation_type == "hill":
+            if cfg.apply_saturation:
                 ad_norm = adstocked / (pt.max(adstocked, axis=0, keepdims=True) + 1e-8)
                 sat_matrix = ad_norm / (ad_norm + gamma_hill + 1e-8)
-            elif cfg.saturation_type == "logistic":
-                sat_matrix = logistic_saturation_pt(adstocked, lam)
             else:
-                sat_matrix = michaelis_menten_pt(adstocked, vmax, km)
+                sat_matrix = adstocked
 
             contrib_stack = sat_matrix * beta
             media_total = contrib_stack.sum(axis=1)
@@ -376,14 +363,7 @@ class BayesianMMM:
 
     def _precompute_adstock_matrix(self, spend: np.ndarray, cfg: ModelConfig) -> np.ndarray:
         """Precompute adstock outside PyMC to avoid expensive scan ops."""
-        if not cfg.precompute_adstock:
-            return spend
-        if cfg.adstock_type != "geometric":
-            warnings.warn(
-                "precompute_adstock=True only supports geometric adstock. "
-                "Non-geometric adstock will fall back to raw scaled spend. "
-                "Set precompute_adstock=False to model non-geometric adstock."
-            )
+        if not cfg.apply_adstock or not cfg.precompute_adstock:
             return spend
 
         x = spend - spend.min(axis=0, keepdims=True)
@@ -554,14 +534,9 @@ class BayesianMMM:
         beta_flat = beta_samples.reshape(-1, n_ch)
 
         # Flatten parameter tensors once to avoid repeated reshape + Python loops.
-        gamma_hill_flat = lam_flat = vmax_flat = km_flat = None
-        if cfg.saturation_type == "hill":
+        gamma_hill_flat = None
+        if cfg.apply_saturation and "gamma_hill" in post:
             gamma_hill_flat = post["gamma_hill"].values.reshape(-1, n_ch)
-        elif cfg.saturation_type == "logistic":
-            lam_flat = post["lam"].values.reshape(-1, n_ch)
-        else:
-            vmax_flat = post["vmax"].values.reshape(-1, n_ch)
-            km_flat = post["km"].values.reshape(-1, n_ch)
 
         curves = {}
         for c, ch in enumerate(dataset.channel_names):
@@ -571,18 +546,13 @@ class BayesianMMM:
             spend_grid = np.linspace(0, x_max, n_points)
 
             # Vectorized across posterior samples (rows) and spend grid points (cols).
-            if cfg.saturation_type == "hill":
+            if cfg.apply_saturation and gamma_hill_flat is not None:
                 x_ref = raw_spend.max() + 1e-8
-                x_norm = spend_grid / x_ref  # (n_points,)
-                gh = gamma_hill_flat[:, c][:, None]  # (n_samples, 1)
+                x_norm = spend_grid / x_ref
+                gh = gamma_hill_flat[:, c][:, None]
                 sat = x_norm[None, :] / (x_norm[None, :] + gh + 1e-12)
-            elif cfg.saturation_type == "logistic":
-                lm = lam_flat[:, c][:, None]  # (n_samples, 1)
-                sat = 1.0 / (1.0 + np.exp(-lm * spend_grid[None, :]))
             else:
-                vm = vmax_flat[:, c][:, None]  # (n_samples, 1)
-                km_ = km_flat[:, c][:, None]  # (n_samples, 1)
-                sat = (vm * spend_grid[None, :]) / (km_ + spend_grid[None, :] + 1e-12)
+                sat = np.broadcast_to(spend_grid[None, :], (beta_flat.shape[0], n_points))
 
             conv_samples = beta_flat[:, c][:, None] * sat
 
