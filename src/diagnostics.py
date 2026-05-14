@@ -164,10 +164,6 @@ def out_of_sample_validation(
     """
     from .transformations import (
         geometric_adstock_np,
-        weibull_adstock_np,
-        hill_saturation_np,
-        logistic_saturation_np,
-        michaelis_menten_np,
     )
 
     idata = results.idata
@@ -182,19 +178,8 @@ def out_of_sample_validation(
     beta_mean = post["beta"].mean(("chain", "draw")).values  # (C,)
     base_mean = float(post["base"].mean(("chain", "draw")).values)
 
-    if cfg.saturation_type == "hill":
-        gamma_mean = post["gamma_hill"].mean(("chain", "draw")).values
-    elif cfg.saturation_type == "logistic":
-        lam_mean = post["lam"].mean(("chain", "draw")).values
-    else:
-        vmax_mean = post["vmax"].mean(("chain", "draw")).values
-        km_mean = post["km"].mean(("chain", "draw")).values
-
-    if cfg.adstock_type == "geometric":
-        decay_mean = post["decay"].mean(("chain", "draw")).values
-    else:
-        wb_shape_mean = post["wb_shape"].mean(("chain", "draw")).values
-        wb_scale_mean = post["wb_scale"].mean(("chain", "draw")).values
+    gamma_mean = post["gamma_hill"].mean(("chain", "draw")).values if cfg.apply_saturation and "gamma_hill" in post else None
+    decay_mean = post["decay"].mean(("chain", "draw")).values if cfg.apply_adstock and "decay" in post else None
 
     gamma_ctrl_mean = None
     if dataset.n_controls > 0 and "gamma_ctrl" in post:
@@ -211,32 +196,22 @@ def out_of_sample_validation(
         # Mirror the model's min-shift to keep values non-negative
         x_full = x_full_raw - x_full_raw.min()
 
-        if cfg.adstock_type == "geometric":
+        if cfg.apply_adstock and decay_mean is not None:
             decay_value = float(decay_mean) if np.ndim(decay_mean) == 0 else float(decay_mean[c])
             x_ad_full = geometric_adstock_np(x_full, decay_value)
         else:
-            x_ad_full = weibull_adstock_np(
-                x_full,
-                float(wb_shape_mean[c]),
-                float(wb_scale_mean[c]),
-                variant="pdf" if cfg.adstock_type == "weibull_pdf" else "cdf",
-            )
+            x_ad_full = x_full
 
         x_ad_full = np.clip(x_ad_full, 0, None)
         x_ad_test = x_ad_full[test_mask]
 
-        if cfg.saturation_type == "hill":
-            # Normalise using training max (after shift)
+        if cfg.apply_saturation and gamma_mean is not None:
             x_train_max = x_full[dataset.train_mask].max() + 1e-8
             x_norm = x_ad_test / x_train_max
             gh = float(gamma_mean[c])
             sat = x_norm / (x_norm + gh + 1e-12)
-        elif cfg.saturation_type == "logistic":
-            sat = logistic_saturation_np(x_ad_test, float(lam_mean[c]))
         else:
-            sat = michaelis_menten_np(
-                x_ad_test, float(vmax_mean[c]), float(km_mean[c])
-            )
+            sat = x_ad_test
 
         channel_preds[:, c] = float(beta_mean[c]) * sat
 

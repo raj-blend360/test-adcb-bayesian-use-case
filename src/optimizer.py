@@ -204,36 +204,11 @@ class BudgetOptimizer:
             beta = float(post["beta"].mean(("chain", "draw")).values[c])
             x_ref_max = float(dataset.spend_raw[:, c].max()) + 1e-8
 
-            sat_type = cfg.saturation_type
-            if sat_type == "hill":
+            if cfg.apply_saturation and "gamma_hill" in post:
                 gamma = float(post["gamma_hill"].mean(("chain", "draw")).values[c])
-                cp = ChannelParams(
-                    name=ch,
-                    saturation_type="hill",
-                    gamma=gamma,
-                    beta=beta,
-                    x_ref_max=x_ref_max,
-                )
-            elif sat_type == "logistic":
-                lam = float(post["lam"].mean(("chain", "draw")).values[c])
-                cp = ChannelParams(
-                    name=ch,
-                    saturation_type="logistic",
-                    lam=lam,
-                    beta=beta,
-                    x_ref_max=x_ref_max,
-                )
+                cp = ChannelParams(name=ch, saturation_type="hill", gamma=gamma, beta=beta, x_ref_max=x_ref_max)
             else:
-                vmax = float(post["vmax"].mean(("chain", "draw")).values[c])
-                km = float(post["km"].mean(("chain", "draw")).values[c])
-                cp = ChannelParams(
-                    name=ch,
-                    saturation_type="michaelis_menten",
-                    vmax=vmax,
-                    km=km,
-                    beta=beta,
-                    x_ref_max=x_ref_max,
-                )
+                cp = ChannelParams(name=ch, saturation_type="hill", gamma=1.0, beta=beta, x_ref_max=1.0)
             channel_params.append(cp)
 
         return channel_params
