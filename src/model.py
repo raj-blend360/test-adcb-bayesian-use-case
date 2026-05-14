@@ -531,9 +531,8 @@ class BayesianMMM:
         beta_flat = beta_samples.reshape(-1, n_ch)
 
         # Flatten parameter tensors once to avoid repeated reshape + Python loops.
-        alpha_hill_flat = gamma_hill_flat = lam_flat = vmax_flat = km_flat = None
+        gamma_hill_flat = lam_flat = vmax_flat = km_flat = None
         if cfg.saturation_type == "hill":
-            alpha_hill_flat = post["alpha_hill"].values.reshape(-1, n_ch)
             gamma_hill_flat = post["gamma_hill"].values.reshape(-1, n_ch)
         elif cfg.saturation_type == "logistic":
             lam_flat = post["lam"].values.reshape(-1, n_ch)
@@ -552,10 +551,8 @@ class BayesianMMM:
             if cfg.saturation_type == "hill":
                 x_ref = raw_spend.max() + 1e-8
                 x_norm = spend_grid / x_ref  # (n_points,)
-                ah = alpha_hill_flat[:, c][:, None]  # (n_samples, 1)
                 gh = gamma_hill_flat[:, c][:, None]  # (n_samples, 1)
-                x_pow = np.power(x_norm[None, :], ah)
-                sat = x_pow / (x_pow + np.power(gh, ah))
+                sat = x_norm[None, :] / (x_norm[None, :] + gh + 1e-12)
             elif cfg.saturation_type == "logistic":
                 lm = lam_flat[:, c][:, None]  # (n_samples, 1)
                 sat = 1.0 / (1.0 + np.exp(-lm * spend_grid[None, :]))

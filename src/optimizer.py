@@ -206,12 +206,10 @@ class BudgetOptimizer:
 
             sat_type = cfg.saturation_type
             if sat_type == "hill":
-                alpha = float(post["alpha_hill"].mean(("chain", "draw")).values[c])
                 gamma = float(post["gamma_hill"].mean(("chain", "draw")).values[c])
                 cp = ChannelParams(
                     name=ch,
                     saturation_type="hill",
-                    alpha=alpha,
                     gamma=gamma,
                     beta=beta,
                     x_ref_max=x_ref_max,
