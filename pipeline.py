@@ -187,6 +187,76 @@ def _apply_channel_inputs(channel_df: pd.DataFrame, mapping: dict[str, str]) -> 
     return df, used
 
 
+def _normalize_channel_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Accept either long-format or wide-format channel input and return long-format.
+
+    Supported wide columns include patterns such as:
+      - spends_<channel>
+      - media_impressions_<channel>
+      - media_clicks_<channel>
+      - exogenous_<control_name>
+    """
+    df = raw_df.copy()
+    if "date" not in df.columns:
+        raise ValueError("Input CSV must include a 'date' column.")
+
+    # Already long format
+    if {"channel", "media_spend"}.issubset(df.columns):
+        return df
+
+    spend_cols = [c for c in df.columns if c.startswith("spends_")]
+    if not spend_cols:
+        raise ValueError(
+            "Unsupported channel CSV schema. Provide long format "
+            "(date, channel, media_spend, ...), or wide columns like 'spends_<channel>'."
+        )
+
+    channel_rows: list[pd.DataFrame] = []
+    exo_cols = [c for c in df.columns if c.startswith("exogenous_")]
+    for spend_col in spend_cols:
+        channel = spend_col.replace("spends_", "", 1)
+        temp = pd.DataFrame(
+            {
+                "date": df["date"],
+                "channel": channel,
+                "media_spend": pd.to_numeric(df[spend_col], errors="coerce").fillna(0.0),
+                "impressions": pd.to_numeric(
+                    df.get(f"media_impressions_{channel}", 0.0), errors="coerce"
+                ).fillna(0.0),
+                "clicks": pd.to_numeric(
+                    df.get(f"media_clicks_{channel}", 0.0), errors="coerce"
+                ).fillna(0.0),
+            }
+        )
+        channel_rows.append(temp)
+
+    long_df = pd.concat(channel_rows, ignore_index=True)
+
+    # Copy exogenous controls to the row level (same weekly value across channels)
+    for exo_col in exo_cols:
+        clean_name = exo_col.replace("exogenous_", "", 1)
+        long_df[clean_name] = long_df["date"].map(df.set_index("date")[exo_col].to_dict())
+
+    # Alias common user-provided exogenous names to model default control names
+    if "holiday_flag" not in long_df.columns and "holiday_flag" in [c.replace("exogenous_", "", 1) for c in exo_cols]:
+        pass
+    if "promo_flag" not in long_df.columns:
+        if "event1" in long_df.columns:
+            long_df["promo_flag"] = long_df["event1"]
+        else:
+            long_df["promo_flag"] = 0.0
+    if "holiday_flag" not in long_df.columns:
+        long_df["holiday_flag"] = 0.0
+
+    # Conversions are required by downstream pipeline; default to 0 if not provided.
+    if "conversions" in df.columns:
+        long_df["conversions"] = long_df["date"].map(df.set_index("date")["conversions"].to_dict())
+    else:
+        long_df["conversions"] = 0.0
+
+    return long_df
+
+
 # ---------------------------------------------------------------------------
 # Pipeline steps
 # ---------------------------------------------------------------------------
@@ -218,6 +288,7 @@ def step_load_data(args) -> tuple[pd.DataFrame, pd.DataFrame]:
         raise FileNotFoundError(f"Channel CSV not found: {args.channel_csv}")
 
     channel_df = pd.read_csv(args.channel_csv)
+    channel_df = _normalize_channel_dataframe(channel_df)
     channel_df["date"] = pd.to_datetime(channel_df["date"], format=args.date_format)
 
     campaign_df = None
