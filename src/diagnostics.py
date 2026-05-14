@@ -32,6 +32,16 @@ def _safe_mape(observed: np.ndarray, predicted: np.ndarray, min_denom_ratio: flo
     return float(np.mean(np.abs(observed - predicted) / denom) * 100)
 
 
+def _weighted_mape(observed: np.ndarray, predicted: np.ndarray) -> float:
+    """Weighted MAPE (WMAPE) = sum(|err|) / sum(|actual|) * 100."""
+    observed = np.asarray(observed, dtype=float)
+    predicted = np.asarray(predicted, dtype=float)
+    denom = float(np.sum(np.abs(observed)))
+    if denom <= 1e-8:
+        return 0.0
+    return float(np.sum(np.abs(observed - predicted)) / denom * 100)
+
+
 
 def _add_significance_flags(summary: pd.DataFrame) -> pd.DataFrame:
     """Add significance flag based on HDI interval excluding zero."""
@@ -259,6 +269,7 @@ def out_of_sample_validation(
     from .model import BayesianMMM
     train_pred = BayesianMMM(results.config).get_contributions(results)["total_predicted"]
     train_mape = _safe_mape(train_actual, train_pred)
+    train_wmape = _weighted_mape(train_actual, train_pred)
     train_ss_res = np.sum((train_actual - train_pred) ** 2)
     train_ss_tot = np.sum((train_actual - train_actual.mean()) ** 2)
     train_r2 = float(1 - train_ss_res / (train_ss_tot + 1e-8))
@@ -272,6 +283,7 @@ def out_of_sample_validation(
         "observed": observed,
         "test_dates": dataset.dates[test_mask],
         "train_mape": train_mape,
+        "train_wmape": train_wmape,
         "train_r2": train_r2,
     }
 
@@ -310,6 +322,7 @@ def generate_diagnostic_report(results: MMMResults) -> pd.DataFrame:
         print(f"    MAE  : {oos['mae']:.2f}")
         print(f"    R²   : {oos['r2']:.4f}")
         print(f"    Train MAPE : {oos['train_mape']:.2f}%")
+        print(f"    Train WMAPE: {oos['train_wmape']:.2f}%")
         print(f"    Train R²   : {oos['train_r2']:.4f}")
     except Exception as e:
         print(f"    Could not compute OOS metrics: {e}")
