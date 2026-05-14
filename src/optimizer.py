@@ -127,6 +127,9 @@ class OptimizerConfig:
     # Campaign allocation method: "proportional" | "response"
     campaign_allocation: str = "proportional"
 
+    # Reverse optimization feasibility tolerance (in model conversion units)
+    reverse_feasibility_tol: float = 1e-3
+
 
 # ---------------------------------------------------------------------------
 # OptimizationResult
@@ -378,7 +381,7 @@ class BudgetOptimizer:
             jac=spend_grad,
             method=cfg.method,
             bounds=bounds,
-            constraints=[{"type": "eq", "fun": conv_constraint}],
+            constraints=[{"type": "ineq", "fun": conv_constraint}],
             options={"maxiter": cfg.max_iter, "ftol": cfg.tol},
         )
 
@@ -395,6 +398,23 @@ class BudgetOptimizer:
         )
         uplift = (optimal_conv - current_conv) / (current_conv + 1e-8) * 100
 
+        target_gap = float(optimal_conv - target_conversions)
+        feasible = target_gap >= -cfg.reverse_feasibility_tol
+        success = bool(result.success and feasible)
+
+        if feasible:
+            message = (
+                f"Reverse optimization succeeded: achieved target within tolerance "
+                f"(gap={target_gap:.6f}, tol={cfg.reverse_feasibility_tol:.6f})."
+            )
+        else:
+            message = (
+                f"Reverse optimization failed to meet target. "
+                f"Achieved={optimal_conv:.6f}, target={target_conversions:.6f}, "
+                f"shortfall={max(0.0, -target_gap):.6f} (> tol={cfg.reverse_feasibility_tol:.6f}). "
+                f"Solver message: {result.message}"
+            )
+
         campaign_alloc = None
         if campaign_df is not None:
             campaign_alloc = self._allocate_to_campaigns(
@@ -402,8 +422,8 @@ class BudgetOptimizer:
             )
 
         return OptimizationResult(
-            success=result.success,
-            message=result.message,
+            success=success,
+            message=message,
             channel_names=channel_names,
             current_spend=current_spend.astype(float),
             optimal_spend=optimal_full,
