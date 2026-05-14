@@ -173,7 +173,6 @@ def out_of_sample_validation(
     base_mean = float(post["base"].mean(("chain", "draw")).values)
 
     if cfg.saturation_type == "hill":
-        alpha_mean = post["alpha_hill"].mean(("chain", "draw")).values
         gamma_mean = post["gamma_hill"].mean(("chain", "draw")).values
     elif cfg.saturation_type == "logistic":
         lam_mean = post["lam"].mean(("chain", "draw")).values
@@ -203,7 +202,8 @@ def out_of_sample_validation(
         x_full = x_full_raw - x_full_raw.min()
 
         if cfg.adstock_type == "geometric":
-            x_ad_full = geometric_adstock_np(x_full, float(decay_mean[c]))
+            decay_value = float(decay_mean) if np.ndim(decay_mean) == 0 else float(decay_mean[c])
+            x_ad_full = geometric_adstock_np(x_full, decay_value)
         else:
             x_ad_full = weibull_adstock_np(
                 x_full,
@@ -219,9 +219,8 @@ def out_of_sample_validation(
             # Normalise using training max (after shift)
             x_train_max = x_full[dataset.train_mask].max() + 1e-8
             x_norm = x_ad_test / x_train_max
-            ah = float(alpha_mean[c])
             gh = float(gamma_mean[c])
-            sat = x_norm**ah / (x_norm**ah + gh**ah + 1e-12)
+            sat = x_norm / (x_norm + gh + 1e-12)
         elif cfg.saturation_type == "logistic":
             sat = logistic_saturation_np(x_ad_test, float(lam_mean[c]))
         else:
@@ -254,6 +253,15 @@ def out_of_sample_validation(
     ss_tot = np.sum((observed - observed.mean()) ** 2)
     r2 = float(1 - ss_res / (ss_tot + 1e-8))
 
+
+    train_actual = dataset.target_raw[dataset.train_mask]
+    from .model import BayesianMMM
+    train_pred = BayesianMMM(results.config).get_contributions(results)["total_predicted"]
+    train_mape = float(np.mean(np.abs((train_actual - train_pred) / (train_actual + 1e-8))) * 100)
+    train_ss_res = np.sum((train_actual - train_pred) ** 2)
+    train_ss_tot = np.sum((train_actual - train_actual.mean()) ** 2)
+    train_r2 = float(1 - train_ss_res / (train_ss_tot + 1e-8))
+
     return {
         "mape": mape,
         "rmse": rmse,
@@ -262,6 +270,8 @@ def out_of_sample_validation(
         "predicted": predicted,
         "observed": observed,
         "test_dates": dataset.dates[test_mask],
+        "train_mape": train_mape,
+        "train_r2": train_r2,
     }
 
 
@@ -298,6 +308,8 @@ def generate_diagnostic_report(results: MMMResults) -> pd.DataFrame:
         print(f"    RMSE : {oos['rmse']:.2f}")
         print(f"    MAE  : {oos['mae']:.2f}")
         print(f"    R²   : {oos['r2']:.4f}")
+        print(f"    Train MAPE : {oos['train_mape']:.2f}%")
+        print(f"    Train R²   : {oos['train_r2']:.4f}")
     except Exception as e:
         print(f"    Could not compute OOS metrics: {e}")
 

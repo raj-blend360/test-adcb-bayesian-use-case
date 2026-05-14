@@ -80,8 +80,6 @@ class ModelConfig:
 
     # Prior scales
     beta_prior_sigma: float = 0.3
-    alpha_hill_mean: float = 2.0
-    alpha_hill_sigma: float = 0.5
     gamma_hill_alpha: float = 3.0
     gamma_hill_beta: float = 3.0
 
@@ -116,7 +114,7 @@ class MMMResults:
     @property
     def summary(self) -> "pd.DataFrame":
         import pandas as pd
-        vars_of_interest = ["beta", "alpha_hill", "gamma_hill", "decay"]
+        vars_of_interest = ["beta", "gamma_hill", "decay"]
         vars_present = [v for v in vars_of_interest if v in self.idata.posterior]
         return az.summary(self.idata, var_names=vars_present, round_to=4)
 
@@ -198,27 +196,14 @@ class BayesianMMM:
 
             # Adstock parameters
             if cfg.adstock_type == "geometric":
-                decay = pm.Beta("decay", alpha=3, beta=3, shape=n_channels)
+                decay = pm.Beta("decay", alpha=3, beta=3)
             else:
                 wb_shape = pm.Gamma("wb_shape", alpha=2, beta=1, shape=n_channels)
                 wb_scale = pm.Gamma("wb_scale", alpha=3, beta=1, shape=n_channels)
 
             # Saturation parameters
             if cfg.saturation_type == "hill":
-                alpha_hill = pm.TruncatedNormal(
-                    "alpha_hill",
-                    mu=cfg.alpha_hill_mean,
-                    sigma=cfg.alpha_hill_sigma,
-                    lower=0.5,
-                    upper=10.0,
-                    shape=n_channels,
-                )
-                gamma_hill = pm.Beta(
-                    "gamma_hill",
-                    alpha=cfg.gamma_hill_alpha,
-                    beta=cfg.gamma_hill_beta,
-                    shape=n_channels,
-                )
+                gamma_hill = pm.Beta("gamma_hill", alpha=cfg.gamma_hill_alpha, beta=cfg.gamma_hill_beta, shape=n_channels)
             elif cfg.saturation_type == "logistic":
                 lam = pm.HalfNormal("lam", sigma=1.0, shape=n_channels)
             else:  # michaelis_menten
@@ -251,7 +236,7 @@ class BayesianMMM:
 
             if cfg.saturation_type == "hill":
                 ad_norm = adstocked / (pt.max(adstocked, axis=0, keepdims=True) + 1e-8)
-                sat_matrix = ad_norm**alpha_hill / (ad_norm**alpha_hill + gamma_hill**alpha_hill)
+                sat_matrix = ad_norm / (ad_norm + gamma_hill + 1e-8)
             elif cfg.saturation_type == "logistic":
                 sat_matrix = logistic_saturation_pt(adstocked, lam)
             else:
