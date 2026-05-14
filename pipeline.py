@@ -658,6 +658,18 @@ def step_visualizations(
     fig = viz.plot_waterfall_decomposition(contributions, save_path=sp("waterfall.png"))
     plt.close(fig)
 
+    print("  Plotting media vs base contribution …")
+    fig = viz.plot_media_vs_base_contribution(
+        contributions, save_path=sp("media_vs_base_contribution.png")
+    )
+    plt.close(fig)
+
+    print("  Plotting channel-wise contribution share …")
+    fig = viz.plot_channel_contribution_share(
+        contributions, save_path=sp("channel_wise_contribution_share.png")
+    )
+    plt.close(fig)
+
     print(f"\n  All plots saved to: {plot_dir}/")
 
 
