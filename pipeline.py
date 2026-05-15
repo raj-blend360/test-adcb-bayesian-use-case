@@ -250,14 +250,15 @@ def _normalize_channel_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
 
     # Copy exogenous controls to the row level (same weekly value across channels)
     for exo_col in exo_cols:
-        clean_name = exo_col.replace("exogenous_", "", 1)
-        long_df[clean_name] = long_df["date"].map(df.set_index("date")[exo_col].to_dict())
+        # Keep the original exogenous_ prefix so control discovery can handle
+        # any number of user-provided exogenous_* variables generically.
+        long_df[exo_col] = long_df["date"].map(df.set_index("date")[exo_col].to_dict())
 
-    # Alias common user-provided exogenous names to model default control names
-    if "holiday_flag" not in long_df.columns and "holiday_flag" in [c.replace("exogenous_", "", 1) for c in exo_cols]:
-        pass
-    if "promo_flag" not in long_df.columns and "event1" in long_df.columns:
-        long_df["promo_flag"] = long_df["event1"]
+    # Backward compatibility aliases for existing default control names.
+    if "holiday_flag" not in long_df.columns and "exogenous_holiday_flag" in long_df.columns:
+        long_df["holiday_flag"] = long_df["exogenous_holiday_flag"]
+    if "promo_flag" not in long_df.columns and "exogenous_event1" in long_df.columns:
+        long_df["promo_flag"] = long_df["exogenous_event1"]
 
     # Conversions are required by downstream pipeline; default to 0 if not provided.
     if "conversions" in df.columns:
