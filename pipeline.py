@@ -76,13 +76,13 @@ def parse_args() -> argparse.Namespace:
                    help="NUTS backend for MCMC (numpyro is usually fastest)")
     p.add_argument("--nuts-init", default="jitter+adapt_diag", dest="nuts_init",
                    help="NUTS initialization strategy")
-    p.add_argument("--weeks", type=int, default=104, help="Synthetic dataset weeks")
+    p.add_argument("--weeks", type=int, default=68, help="Synthetic dataset weeks")
     p.add_argument("--channel-inputs", nargs="*", default=[], dest="channel_inputs",
                    help="Per-channel input metric as Channel:metric (metric in {impressions,clicks,spends})")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
     p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30%% bounds")
-    p.add_argument("--target", type=float, default=None, help="Target conversions for reverse optimization")
+    p.add_argument("--target", type=float, default=94.0, help="Target conversions for reverse optimization (raw conversions; default 94)")
     p.add_argument(
         "--optimization-level",
         choices=["monthly", "annual"],
@@ -536,9 +536,9 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
 
     optimizer = BudgetOptimizer(
         OptimizerConfig(
-            use_bounds=not args.no_bounds,
+            use_bounds=False,
             bounds_pct=0.30,
-            max_increase_pct=0.60,
+            max_increase_pct=None,
             frozen_channels=args.freeze,
             campaign_allocation="proportional",
         )
@@ -588,10 +588,10 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
             "Channel": opt_result.channel_names,
             "Avg Monthly Spend": current_spend_weekly * 4.34524,
             "Optimised Spends": opt_result.optimal_spend,
-            "% Change in Spend": opt_result.spend_change_pct,
+            "Spend Delta": opt_result.optimal_spend - (current_spend_weekly * 4.34524),
             "Avg Conversions": channel_current_conv,
             "Optimised Conversions": channel_opt_conv,
-            "% Change in Conversions": conv_change_pct,
+            "Conversion Uplift": channel_opt_conv - channel_current_conv,
             "Optimization Level": args.optimization_level,
         }
     )

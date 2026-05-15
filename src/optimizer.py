@@ -114,7 +114,7 @@ class OptimizerConfig:
     bounds_pct: float = 0.30            # ±30% default
 
     # Safety cap on increase
-    max_increase_pct: float = 0.60      # 60% max increase per channel
+    max_increase_pct: Optional[float] = 0.60      # None disables max increase cap
 
     # Channels to freeze (names)
     frozen_channels: list[str] = field(default_factory=list)
@@ -129,6 +129,9 @@ class OptimizerConfig:
 
     # Reverse optimization feasibility tolerance (in model conversion units)
     reverse_feasibility_tol: float = 1e-3
+
+    # Minimum spend floor for non-frozen channels (>0 keeps all active channels positive)
+    min_channel_spend: float = 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +363,11 @@ class BudgetOptimizer:
         channel_names = [p.name for p in channel_params]
 
         # For reverse optimization: no upper bounds
-        bounds = [(0.0, None) for _ in range(n)]
+        frozen_mask = np.array([ch in cfg.frozen_channels for ch in channel_names], dtype=bool)
+        bounds = [
+            (0.0, 0.0) if frozen_mask[i] else (cfg.min_channel_spend, None)
+            for i in range(n)
+        ]
         x0 = current_spend.copy().astype(float)
 
         def total_spend(x: np.ndarray) -> float:
@@ -385,7 +392,12 @@ class BudgetOptimizer:
             options={"maxiter": cfg.max_iter, "ftol": cfg.tol},
         )
 
-        optimal_full = np.clip(result.x, 0, None)
+        optimal_full = result.x.astype(float)
+        for i in range(n):
+            if bounds[i][1] == 0.0:
+                optimal_full[i] = 0.0
+            else:
+                optimal_full[i] = max(float(optimal_full[i]), cfg.min_channel_spend)
         change_pct = (optimal_full - current_spend) / (current_spend + 1e-8) * 100
 
         current_conv = sum(
@@ -524,19 +536,20 @@ class BudgetOptimizer:
                 bounds.append((0.0, None))
                 continue
 
-            lb = 0.0
+            lb = cfg.min_channel_spend
             ub = None
 
             if cfg.use_bounds:
                 lb = max(0.0, cs * (1 - cfg.bounds_pct))
                 ub = cs * (1 + cfg.bounds_pct)
 
-            # Safety cap: never increase by more than max_increase_pct
-            max_ub = cs * (1 + cfg.max_increase_pct)
-            if ub is None:
-                ub = max_ub
-            else:
-                ub = min(ub, max_ub)
+            # Optional safety cap: never increase by more than max_increase_pct
+            if cfg.max_increase_pct is not None:
+                max_ub = cs * (1 + cfg.max_increase_pct)
+                if ub is None:
+                    ub = max_ub
+                else:
+                    ub = min(ub, max_ub)
 
             bounds.append((lb, ub))
 
