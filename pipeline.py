@@ -82,6 +82,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
     p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30%% bounds")
+    p.add_argument(
+        "--share-bounds-json",
+        default=None,
+        dest="share_bounds_json",
+        help="Optional JSON map of channel share bounds, e.g. '{\"meta\":[0.2,0.6],\"demand_gen\":[0,0.05]}'.",
+    )
     p.add_argument("--target", type=float, default=94.0, help="Target conversions for reverse optimization (raw conversions; default 94)")
     p.add_argument(
         "--optimization-level",
@@ -537,6 +543,20 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
 
     channel_params = mmm.extract_channel_params(results)
 
+    custom_share_bounds = None
+    if args.share_bounds_json:
+        try:
+            raw = json.loads(args.share_bounds_json)
+            custom_share_bounds = {}
+            for k, v in raw.items():
+                if not isinstance(v, (list, tuple)) or len(v) != 2:
+                    continue
+                lb = float(v[0]) if v[0] is not None else 0.0
+                ub = float(v[1]) if v[1] is not None else None
+                custom_share_bounds[str(k)] = (lb, ub)
+        except Exception as e:
+            print(f"  [warn] Invalid --share-bounds-json value ({e}). Ignoring custom share bounds.")
+
     optimizer = BudgetOptimizer(
         OptimizerConfig(
             use_bounds=not args.no_bounds,
@@ -545,6 +565,7 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
             max_increase_pct=0.60 if not args.no_bounds else None,
             frozen_channels=args.freeze,
             campaign_allocation="proportional",
+            custom_channel_share_bounds=custom_share_bounds,
         )
     )
 
@@ -558,6 +579,8 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     print(f"  Optimization level  : {period_label}")
     print(f"  Frozen channels     : {args.freeze or 'none'}")
     print(f"  Bounds ±30%         : {'ON' if not args.no_bounds else 'OFF'}")
+    if custom_share_bounds:
+        print(f"  Custom share bounds : {custom_share_bounds}")
 
     # Annual optimization
     opt_result = optimizer.optimize_budget(

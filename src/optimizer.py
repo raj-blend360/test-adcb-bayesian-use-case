@@ -132,6 +132,9 @@ class OptimizerConfig:
 
     # Minimum spend floor for non-frozen channels (>0 keeps all active channels positive)
     min_channel_spend: float = 1e-6
+    # Optional channel share bounds as fractions of total budget.
+    # Example: {"google_search": (0.0, 0.60), "demand_gen": (0.0, 0.05)}
+    custom_channel_share_bounds: Optional[dict[str, tuple[float, Optional[float]]]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -595,7 +598,12 @@ class BudgetOptimizer:
             lb = cfg.min_channel_spend
             ub = None
 
-            if cfg.use_bounds:
+            if cfg.custom_channel_share_bounds and p.name in cfg.custom_channel_share_bounds:
+                share_lb, share_ub = cfg.custom_channel_share_bounds[p.name]
+                total_budget = float(current_spend.sum())
+                lb = max(0.0, float(share_lb) * total_budget)
+                ub = None if share_ub is None else max(lb, float(share_ub) * total_budget)
+            elif cfg.use_bounds:
                 lb = max(0.0, cs * (1 - cfg.bounds_pct))
                 ub = cs * (1 + cfg.bounds_pct)
 
