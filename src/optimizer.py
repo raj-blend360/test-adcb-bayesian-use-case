@@ -298,6 +298,21 @@ class BudgetOptimizer:
             options={"maxiter": cfg.max_iter, "ftol": cfg.tol},
         )
 
+        # SLSQP can occasionally stall at the initial point when user-provided
+        # gradients are noisy at very different spend scales. Retry once using
+        # SciPy's internal finite-difference gradient when that happens.
+        if (not result.success) or np.allclose(result.x, x0, rtol=0.0, atol=1e-9):
+            retry = minimize(
+                neg_conversions,
+                x0,
+                method=cfg.method,
+                bounds=bounds,
+                constraints=constraints,
+                options={"maxiter": cfg.max_iter, "ftol": cfg.tol},
+            )
+            if retry.success or (retry.fun < result.fun - 1e-10):
+                result = retry
+
         # Rebuild full spend vector
         optimal_full = current_spend.copy().astype(float)
         optimal_full[free_idx] = np.minimum(
