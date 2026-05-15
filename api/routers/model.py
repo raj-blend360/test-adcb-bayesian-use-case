@@ -208,7 +208,7 @@ def _run_fit(run_id: int, req_dict: dict):
             for _, row in diag_df.iterrows():
                 diag[str(row.get("metric", ""))] = row.get("value")
 
-        adj_r2 = float(oos_dict.get("r2", 0.0))
+        adj_r2 = float(oos_dict.get("adj_r2", 0.0))
         mape = float(oos_dict.get("mape", 0.0))
         rhat_pass_count = int(conv_df.get("rhat_ok", pd.Series([True])).sum()) if not conv_df.empty else 1
         total_params = max(len(conv_df), 1)
