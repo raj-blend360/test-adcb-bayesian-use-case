@@ -257,12 +257,18 @@ def out_of_sample_validation(
         predicted = predicted_scaled
         observed = observed_scaled
 
+    def _adjusted_r2(r2_value: float, n_obs: int, n_predictors: int) -> float:
+        denom = max(n_obs - n_predictors - 1, 1)
+        return float(1 - (1 - r2_value) * ((n_obs - 1) / denom))
+
     mape = _safe_mape(observed, predicted)
     rmse = float(np.sqrt(np.mean((observed - predicted) ** 2)))
     mae = float(np.mean(np.abs(observed - predicted)))
     ss_res = np.sum((observed - predicted) ** 2)
     ss_tot = np.sum((observed - observed.mean()) ** 2)
     r2 = float(1 - ss_res / (ss_tot + 1e-8))
+    n_predictors = int(dataset.n_channels + dataset.n_controls)
+    adj_r2 = _adjusted_r2(r2, len(observed), n_predictors)
 
 
     train_actual = dataset.target_raw[dataset.train_mask]
@@ -273,18 +279,21 @@ def out_of_sample_validation(
     train_ss_res = np.sum((train_actual - train_pred) ** 2)
     train_ss_tot = np.sum((train_actual - train_actual.mean()) ** 2)
     train_r2 = float(1 - train_ss_res / (train_ss_tot + 1e-8))
+    train_adj_r2 = _adjusted_r2(train_r2, len(train_actual), n_predictors)
 
     return {
         "mape": mape,
         "rmse": rmse,
         "mae": mae,
         "r2": r2,
+        "adj_r2": adj_r2,
         "predicted": predicted,
         "observed": observed,
         "test_dates": dataset.dates[test_mask],
         "train_mape": train_mape,
         "train_wmape": train_wmape,
         "train_r2": train_r2,
+        "train_adj_r2": train_adj_r2,
     }
 
 
@@ -321,9 +330,11 @@ def generate_diagnostic_report(results: MMMResults) -> pd.DataFrame:
         print(f"    RMSE : {oos['rmse']:.2f}")
         print(f"    MAE  : {oos['mae']:.2f}")
         print(f"    R²   : {oos['r2']:.4f}")
+        print(f"    Adj R²: {oos['adj_r2']:.4f}")
         print(f"    Train MAPE : {oos['train_mape']:.2f}%")
         print(f"    Train WMAPE: {oos['train_wmape']:.2f}%")
         print(f"    Train R²   : {oos['train_r2']:.4f}")
+        print(f"    Train Adj R²: {oos['train_adj_r2']:.4f}")
     except Exception as e:
         print(f"    Could not compute OOS metrics: {e}")
 

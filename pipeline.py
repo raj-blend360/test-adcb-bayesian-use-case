@@ -500,7 +500,9 @@ def step_diagnostics(results, args) -> dict:
     try:
         oos = out_of_sample_validation(results)
         print(f"\n  OOS MAPE: {oos['mape']:.2f}%  |  R²: {oos['r2']:.4f}")
+        print(f"  OOS Adj R²: {oos['adj_r2']:.4f}")
         print(f"  Train WMAPE: {oos['train_wmape']:.2f}%")
+        print(f"  Train Adj R²: {oos['train_adj_r2']:.4f}")
     except Exception as e:
         oos = None
         print(f"  OOS validation skipped: {e}")
