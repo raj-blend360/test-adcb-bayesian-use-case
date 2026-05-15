@@ -590,13 +590,13 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     excel_df = pd.DataFrame(
         {
             "Channel": opt_result.channel_names,
-            "Avg Monthly Spend": current_spend_weekly * 4.34524,
+            "Current Spend": opt_result.current_spend,
             "Optimised Spends": opt_result.optimal_spend,
-            "Spend Delta": opt_result.optimal_spend - (current_spend_weekly * 4.34524),
+            "Spend Delta": opt_result.optimal_spend - opt_result.current_spend,
             "Avg Conversions": channel_current_conv,
             "Optimised Conversions": channel_opt_conv,
             "Conversion Uplift": channel_opt_conv - channel_current_conv,
-            "Optimization Level": args.optimization_level,
+            "Optimization Level": period_label,
         }
     )
     excel_path = os.path.join(args.output_dir, "optimization_results.xlsx")
