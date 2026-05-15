@@ -262,7 +262,9 @@ class BudgetOptimizer:
         free_params = [channel_params[i] for i in free_idx]
 
         bounds = self._build_bounds(free_params, free_current, reverse=False)
-        x0 = np.clip(free_current, [b[0] for b in bounds], [b[1] for b in bounds])
+        lower_bounds = np.array([b[0] for b in bounds], dtype=float)
+        upper_bounds = np.array([np.inf if b[1] is None else b[1] for b in bounds], dtype=float)
+        x0 = np.minimum(np.maximum(free_current.astype(float), lower_bounds), upper_bounds)
 
         def neg_conversions(x: np.ndarray) -> float:
             return -sum(p.conversions(np.array([xi]))[0] for p, xi in zip(free_params, x))
@@ -298,8 +300,8 @@ class BudgetOptimizer:
 
         # Rebuild full spend vector
         optimal_full = current_spend.copy().astype(float)
-        optimal_full[free_idx] = np.clip(
-            result.x, [b[0] for b in bounds], [b[1] for b in bounds]
+        optimal_full[free_idx] = np.minimum(
+            np.maximum(result.x.astype(float), lower_bounds), upper_bounds
         )
 
         change_pct = (optimal_full - current_spend) / (current_spend + 1e-8) * 100
