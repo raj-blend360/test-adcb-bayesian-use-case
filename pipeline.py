@@ -539,9 +539,10 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
 
     optimizer = BudgetOptimizer(
         OptimizerConfig(
-            use_bounds=False,
+            use_bounds=not args.no_bounds,
             bounds_pct=0.30,
-            max_increase_pct=None,
+            # Keep the safety rail when bounds are active; disable only when bounds are disabled.
+            max_increase_pct=0.60 if not args.no_bounds else None,
             frozen_channels=args.freeze,
             campaign_allocation="proportional",
         )
