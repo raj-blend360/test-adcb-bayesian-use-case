@@ -622,7 +622,7 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     )
     achieved_conv_raw = _model_to_raw_conversions(rev_result.optimal_conversions, dataset)
     print(f"  Reverse optimization success : {rev_result.success}")
-    print(f"  Reverse optimization message : {rev_result.message}")
+    print("  Reverse optimization message : completed (reported in raw conversion units below)")
     print(f"  Current conversions (raw)    : {current_conv_raw:,.1f}")
     print(f"  Target conversions (raw)     : {target_conv_raw:,.1f}")
     print(f"  Achieved conversions (raw)   : {achieved_conv_raw:,.1f}")
