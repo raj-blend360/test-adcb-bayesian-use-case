@@ -29,16 +29,17 @@ def _load_optimizer(run: ModelRun, session: Session):
 
     channels = df["channel"].unique().tolist()
     mean_spend = {ch: float(df[df["channel"] == ch]["media_spend"].mean()) for ch in channels}
-    contributions = json.loads(run.contributions_json) if run.contributions_json else {}
+    curves = metrics.get("response_curves", {}) or {}
 
-    # Approximate ROI coefficients from contributions / mean spend
-    rois = {}
-    for ch in channels:
-        spend = mean_spend.get(ch, 1.0)
-        contrib = contributions.get(ch, 0.0)
-        rois[ch] = contrib / spend if spend > 0 else 0.0
+    return channels, curves, mean_spend
 
-    return channels, rois, mean_spend
+
+def _curve_conversions(curve: dict, spend: float) -> float:
+    x = np.asarray(curve.get("x", []), dtype=float)
+    y = np.asarray(curve.get("y_mean", []), dtype=float)
+    if x.size < 2 or y.size < 2:
+        return 0.0
+    return float(np.interp(spend, x, y, left=0.0, right=float(y[-1])))
 
 
 def _build_bounds(channels, channel_bounds_list, total_budget=None):
@@ -63,18 +64,23 @@ def forward_optimize(req: ForwardOptimizeRequest, db: DBSession = Depends(get_db
         raise HTTPException(400, "Model run not found or not complete")
     session = db.get(Session, req.session_id)
 
-    channels, rois, _ = _load_optimizer(run, session)
+    channels, curves, mean_spend = _load_optimizer(run, session)
     bounds = _build_bounds(channels, req.channel_bounds, req.total_budget)
 
-    # Simple proportional allocation weighted by ROI
     from scipy.optimize import minimize
-
-    roi_arr = np.array([rois.get(ch, 0.0) for ch in channels])
     lo_arr = np.array([b[0] for b in bounds])
     hi_arr = np.array([b[1] if b[1] is not None else req.total_budget for b in bounds])
 
     def neg_conversions(x):
-        return -np.sum(roi_arr * x)
+        total = 0.0
+        for i, ch in enumerate(channels):
+            curve = curves.get(ch)
+            if curve:
+                total += _curve_conversions(curve, float(x[i]))
+            else:
+                base = mean_spend.get(ch, 1.0)
+                total += float(x[i]) / max(base, 1e-9)
+        return -total
 
     constraints = [{"type": "eq", "fun": lambda x: np.sum(x) - req.total_budget}]
     scipy_bounds = list(zip(lo_arr, hi_arr))
@@ -115,28 +121,28 @@ def reverse_optimize(req: ReverseOptimizeRequest, db: DBSession = Depends(get_db
         raise HTTPException(400, "Model run not found or not complete")
     session = db.get(Session, req.session_id)
 
-    channels, rois, _ = _load_optimizer(run, session)
+    channels, curves, mean_spend = _load_optimizer(run, session)
     bounds = _build_bounds(channels, req.channel_bounds)
 
-    roi_arr = np.array([rois.get(ch, 1e-9) for ch in channels])
     lo_arr = np.array([b[0] for b in bounds])
     hi_arr = np.array([b[1] if b[1] is not None else 1e9 for b in bounds])
 
     def total_spend(x):
         return np.sum(x)
 
-    constraints = [
-        {"type": "ineq", "fun": lambda x: np.sum(roi_arr * x) - req.target_conversions}
-    ]
+    constraints = [{
+        "type": "ineq",
+        "fun": lambda x: (
+            sum(
+                _curve_conversions(curves[ch], float(x[i])) if curves.get(ch)
+                else (float(x[i]) / max(mean_spend.get(ch, 1.0), 1e-9))
+                for i, ch in enumerate(channels)
+            ) - req.target_conversions
+        ),
+    }]
     scipy_bounds = list(zip(lo_arr, hi_arr))
 
-    # Start from proportional allocation
-    if np.sum(roi_arr) > 0:
-        weights = roi_arr / np.sum(roi_arr)
-        est_spend = req.target_conversions / (np.sum(roi_arr * weights) + 1e-9)
-        x0 = weights * est_spend
-    else:
-        x0 = np.full(len(channels), req.target_conversions / len(channels))
+    x0 = np.full(len(channels), max(req.target_conversions, 1.0) / len(channels))
     x0 = np.clip(x0, lo_arr, hi_arr)
 
     from scipy.optimize import minimize
