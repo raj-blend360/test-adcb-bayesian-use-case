@@ -510,19 +510,24 @@ def step_diagnostics(results, args) -> dict:
 
 
 
-def _target_scale_factor(dataset) -> float:
+def _raw_to_model_conversions(raw_value: float, dataset) -> float:
+    """Convert raw conversions into model space using dataset target scaler."""
     scaler = getattr(dataset, "target_scaler", None)
     if scaler is None:
-        return 1.0
-    return float(scaler.scale_[0])
-
-
-def _raw_to_model_conversions(raw_value: float, dataset) -> float:
-    return float(raw_value) / _target_scale_factor(dataset)
+        return float(raw_value)
+    y_std = float(scaler.scale_[0])
+    y_mean = float(scaler.mean_[0])
+    return (float(raw_value) - y_mean) / y_std
 
 
 def _model_to_raw_conversions(model_value: float, dataset) -> float:
-    return float(model_value) * _target_scale_factor(dataset)
+    """Convert model-space conversions back into raw conversion units."""
+    scaler = getattr(dataset, "target_scaler", None)
+    if scaler is None:
+        return float(model_value)
+    y_std = float(scaler.scale_[0])
+    y_mean = float(scaler.mean_[0])
+    return float(model_value) * y_std + y_mean
 
 def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     _section("STEP 7: Budget Optimization")
