@@ -1,13 +1,12 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Upload as UploadIcon, CheckCircle, AlertCircle } from 'lucide-react'
-import { useMutation } from '@tanstack/react-query'
 import PageHeader from '../components/PageHeader'
 import Spinner from '../components/Spinner'
-import { uploadChannelCSV, uploadCampaignCSV } from '../lib/api'
+import { uploadChannelCSV } from '../lib/api'
 import { useStore } from '../store'
 
-const CHANNEL_COLS = ['date', 'channel', 'media_spend', 'conversions', 'impressions', 'clicks']
+const CHANNEL_COLS = ['date', 'conversions', 'spends_channel1', 'media_impressions_channel1', 'media_clicks_channel1', 'exogenous_holiday_flag']
 
 function DropZone({
   label,
@@ -74,7 +73,6 @@ export default function UploadPage() {
   const [channelPreview, setChannelPreview] = useState<any[]>([])
   const [channelCols, setChannelCols] = useState<string[]>([])
   const [channelStatus, setChannelStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [campaignStatus, setCampaignStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
 
   const handleChannelFile = async (file: File) => {
@@ -95,24 +93,11 @@ export default function UploadPage() {
     }
   }
 
-  const handleCampaignFile = async (file: File) => {
-    if (!upload.sessionId) return
-    setCampaignStatus('loading')
-    try {
-      const res = await uploadCampaignCSV(file, upload.sessionId)
-      setUpload({ hasCampaignData: true, campaigns: [...new Set(res.preview.map((r: any) => r.campaign).filter(Boolean))] })
-      setCampaignStatus('success')
-    } catch (e: any) {
-      setError(e.response?.data?.detail ?? 'Campaign upload failed')
-      setCampaignStatus('error')
-    }
-  }
-
   return (
     <div>
       <PageHeader
         title="Upload Data"
-        subtitle="Upload channel-level and optionally campaign-level weekly CSV files"
+        subtitle="Upload a single weekly CSV file with wide channel columns"
         actions={
           channelStatus === 'success' ? (
             <button className="btn-primary" onClick={() => navigate('/transform')}>
@@ -131,34 +116,22 @@ export default function UploadPage() {
 
         {/* Required columns hint */}
         <div className="card">
-          <h3 className="font-semibold text-gray-900 mb-3">Required columns (channel CSV)</h3>
+          <h3 className="font-semibold text-gray-900 mb-3">Expected columns (single CSV)</h3>
           <div className="flex flex-wrap gap-2">
             {CHANNEL_COLS.map((c) => (
               <span key={c} className="badge badge-blue">{c}</span>
             ))}
           </div>
           <p className="text-xs text-gray-500 mt-2">
-            Required: <strong>date, channel, media_spend, conversions</strong>. Optional: impressions, clicks, sub_channel, campaign.
+            Required: <strong>date, conversions, spends_&lt;channel&gt;</strong>. Optional per-channel: media_impressions_&lt;channel&gt;, media_clicks_&lt;channel&gt;. Optional global controls: exogenous_*.
           </p>
         </div>
 
         {/* Upload zones */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6">
           <div className="space-y-2">
-            <h3 className="font-medium text-gray-900">Channel-level data <span className="text-red-500">*</span></h3>
-            <DropZone label="Channel CSV" accept=".csv" onFile={handleChannelFile} status={channelStatus} />
-          </div>
-          <div className="space-y-2">
-            <h3 className="font-medium text-gray-900">Campaign-level data <span className="text-gray-400">(optional)</span></h3>
-            <DropZone
-              label="Campaign CSV"
-              accept=".csv"
-              onFile={handleCampaignFile}
-              status={channelStatus === 'success' ? campaignStatus : 'idle'}
-            />
-            {channelStatus !== 'success' && (
-              <p className="text-xs text-gray-400">Upload channel CSV first</p>
-            )}
+            <h3 className="font-medium text-gray-900">Weekly MMM data <span className="text-red-500">*</span></h3>
+            <DropZone label="MMM CSV" accept=".csv" onFile={handleChannelFile} status={channelStatus} />
           </div>
         </div>
 

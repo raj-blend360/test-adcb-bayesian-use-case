@@ -40,6 +40,53 @@ def _detect_mapping(columns: list[str]) -> ColumnMapping:
     return mapping
 
 
+def _normalize_single_csv(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize a single wide CSV into the long channel-level schema.
+
+    Expected wide patterns per channel:
+      - spends_<channel>
+      - media_impressions_<channel>
+      - media_clicks_<channel>
+    plus shared columns like date, conversions, and exogenous_* controls.
+    """
+    cols = list(df.columns)
+    if CHANNEL_REQUIRED.issubset(cols):
+        return df
+
+    if "date" not in cols:
+        raise HTTPException(400, "Missing required column: date")
+
+    spend_cols = [c for c in cols if c.startswith("spends_")]
+    if not spend_cols:
+        raise HTTPException(400, "Missing spend columns. Expected columns like spends_channel1")
+
+    if "conversions" not in cols:
+        raise HTTPException(400, "Missing required target column: conversions")
+
+    channels = [c.removeprefix("spends_") for c in spend_cols]
+    exogenous_cols = [c for c in cols if c.startswith("exogenous_")]
+
+    long_rows = []
+    for _, row in df.iterrows():
+        for ch in channels:
+            spend_col = f"spends_{ch}"
+            imp_col = f"media_impressions_{ch}"
+            clk_col = f"media_clicks_{ch}"
+            rec = {
+                "date": row["date"],
+                "channel": ch,
+                "media_spend": row.get(spend_col, 0.0),
+                "impressions": row.get(imp_col, 0.0) if imp_col in cols else 0.0,
+                "clicks": row.get(clk_col, 0.0) if clk_col in cols else 0.0,
+                "conversions": row["conversions"],
+            }
+            for exog in exogenous_cols:
+                rec[exog] = row.get(exog)
+            long_rows.append(rec)
+
+    return pd.DataFrame(long_rows)
+
+
 @router.post("/channel", response_model=UploadResponse)
 async def upload_channel(
     file: UploadFile = File(...),
@@ -52,9 +99,11 @@ async def upload_channel(
     except Exception as e:
         raise HTTPException(400, f"Could not parse CSV: {e}")
 
+    df = _normalize_single_csv(df)
+
     missing = CHANNEL_REQUIRED - set(df.columns)
     if missing:
-        raise HTTPException(400, f"Missing required columns: {missing}")
+        raise HTTPException(400, f"Missing required columns after normalization: {missing}")
 
     # Persist file
     save_path = os.path.join(UPLOAD_DIR, f"channel_{file.filename}")
