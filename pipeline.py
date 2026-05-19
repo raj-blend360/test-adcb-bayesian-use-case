@@ -114,6 +114,13 @@ def parse_args() -> argparse.Namespace:
         dest="date_format",
         help="Date parsing format for input CSV files (used with --input-csv/--campaign-csv)",
     )
+    p.add_argument(
+        "--time-granularity",
+        choices=["auto", "weekly", "daily"],
+        default="auto",
+        dest="time_granularity",
+        help="Input time granularity for modelling. 'auto' infers from date spacing.",
+    )
     return p.parse_args()
 
 
@@ -275,6 +282,17 @@ def _normalize_channel_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     return long_df
 
 
+def _resolve_time_granularity(channel_df: pd.DataFrame, requested: str) -> str:
+    if requested in {"weekly", "daily"}:
+        return requested
+    dates = pd.to_datetime(channel_df["date"], errors="coerce").dropna().sort_values().unique()
+    if len(dates) < 2:
+        return "weekly"
+    diffs = np.diff(dates).astype("timedelta64[D]").astype(int)
+    median_gap = int(np.median(diffs))
+    return "daily" if median_gap <= 1 else "weekly"
+
+
 # ---------------------------------------------------------------------------
 # Pipeline steps
 # ---------------------------------------------------------------------------
@@ -358,13 +376,21 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
 
     print("  Requested control flags:", requested_controls or "none")
 
+    granularity = _resolve_time_granularity(channel_df, args.time_granularity)
+    if granularity == "daily":
+        seasonality_periods = [365.0, 180.0, 7.0]
+        test_periods = 84  # hold out ~12 weeks
+    else:
+        seasonality_periods = [52.0, 26.0]
+        test_periods = 12
+
     cfg = DataConfig(
         spend_col="media_input",
-        test_weeks=12,
+        test_periods=test_periods,
         scale_spend=True,
         scale_target=True,
         include_seasonality=True,
-        seasonality_periods=[52.0, 26.0],
+        seasonality_periods=seasonality_periods,
         n_harmonics=2,
         control_cols=requested_controls,
     )
@@ -374,8 +400,9 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     print(f"  Time steps    : {dataset.n_time}")
     print(f"  Channels      : {dataset.n_channels}  → {dataset.channel_names}")
     print(f"  Controls      : {dataset.n_controls}  → {dataset.control_names[:4]}…")
-    print(f"  Train weeks   : {dataset.train_mask.sum()}")
-    print(f"  Test weeks    : {dataset.test_mask.sum()}")
+    print(f"  Granularity   : {granularity}")
+    print(f"  Train periods : {dataset.train_mask.sum()}")
+    print(f"  Test periods  : {dataset.test_mask.sum()}")
     print("  Input metric by channel:")
     for ch in dataset.channel_names:
         print(f"    {ch:<20} {used_inputs.get(ch, 'clicks')}")
@@ -570,7 +597,14 @@ def step_optimize(results, mmm, dataset, campaign_df, args) -> tuple:
     )
 
     current_spend_weekly = dataset.spend_raw.mean(axis=0)  # average weekly spend per channel
-    period_factor = 12 if args.optimization_level == "monthly" else 52
+    granularity = _resolve_time_granularity(
+        pd.DataFrame({"date": pd.to_datetime(dataset.dates)}),
+        args.time_granularity,
+    )
+    if args.optimization_level == "monthly":
+        period_factor = 30 if granularity == "daily" else 12
+    else:
+        period_factor = 365 if granularity == "daily" else 52
     period_label = "monthly" if args.optimization_level == "monthly" else "annual"
     current_spend_period = current_spend_weekly * period_factor
     total_budget = current_spend_period.sum()
