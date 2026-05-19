@@ -112,7 +112,7 @@ class DataConfig:
     control_cols: list[str] = field(default_factory=lambda: ["holiday_flag", "promo_flag"])
 
     # Train / test split
-    test_weeks: int = 12
+    test_periods: int = 12
 
     # Normalisation
     scale_spend: bool = True
@@ -211,7 +211,7 @@ class DataProcessor:
         """Full preparation pipeline.
 
         Args:
-            df: Channel-level weekly DataFrame (one row per week × channel).
+        df: Channel-level time-series DataFrame (one row per period × channel).
                 Must contain at minimum: date, channel, media_spend, conversions.
             campaign_df: Optional campaign-level DataFrame for hierarchical modelling.
 
@@ -220,7 +220,7 @@ class DataProcessor:
         """
         cfg = self.config
         df = self._validate_and_clean(df)
-        df = self._aggregate_to_channel_weekly(df)
+        df = self._aggregate_to_channel_period(df)
 
         # Pivot to wide: rows=weeks, cols=channels
         spend_wide = (
@@ -266,7 +266,7 @@ class DataProcessor:
 
         # Train / test split
         T = len(dates)
-        n_test = cfg.test_weeks
+        n_test = min(cfg.test_periods, max(1, T - 1))
         train_mask = np.zeros(T, dtype=bool)
         test_mask = np.zeros(T, dtype=bool)
         train_mask[: T - n_test] = True
@@ -321,7 +321,7 @@ class DataProcessor:
 
         return df
 
-    def _aggregate_to_channel_weekly(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _aggregate_to_channel_period(self, df: pd.DataFrame) -> pd.DataFrame:
         cfg = self.config
         agg_cols = {cfg.spend_col: "sum", cfg.target_col: "mean"}
         for col in cfg.control_cols:
