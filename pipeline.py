@@ -394,7 +394,7 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
 
     granularity = _resolve_time_granularity(channel_df, args.time_granularity)
     if granularity == "daily":
-        seasonality_periods = [365.0, 180.0, 7.0]
+        seasonality_periods = [180.0,]
         test_periods = 84  # hold out ~12 weeks
     else:
         seasonality_periods = [52.0, 26.0]
@@ -486,7 +486,7 @@ def step_fit_model(dataset, args) -> "MMMResults":
         n_samples=args.samples,
         n_tune=args.tune,
         n_chains=args.chains,
-        target_accept=0.90,
+        target_accept=0.99,
         random_seed=args.seed,
         cores=args.cores,
         nuts_sampler=args.nuts_sampler,
