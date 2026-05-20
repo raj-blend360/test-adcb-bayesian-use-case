@@ -599,8 +599,12 @@ class BayesianMMM:
                 "does not reconstruct predictions within tolerance."
             )
 
+        # Soft positivity for channel reporting: keep displayed channel contributions
+        # non-negative (negative values are shown as zero).
+        contrib_display = np.clip(contrib_unscaled, 0.0, np.inf)
+
         contrib_df = pd.DataFrame(
-            contrib_unscaled,
+            contrib_display,
             columns=dataset.channel_names,
             index=train_dates,
         )
@@ -608,7 +612,7 @@ class BayesianMMM:
         contrib_df["controls"] = ctrl_unscaled
 
         total_unscaled = dataset.target_raw[train_mask]
-        channel_totals = contrib_unscaled.sum(axis=0)
+        channel_totals = contrib_display.sum(axis=0)
         positive_totals = np.clip(channel_totals, 0.0, np.inf)
         media_total = float(positive_totals.sum())
 
@@ -678,6 +682,8 @@ class BayesianMMM:
             raise ValueError(
                 f"Unexpected beta posterior shape {beta_samples.shape}; expected 3D or 4D tensor."
             )
+        # Soft positivity for response curves: hide negative beta draws by flooring at zero.
+        beta_flat = np.clip(beta_flat, 0.0, np.inf)
 
         # Flatten parameter tensors once to avoid repeated reshape + Python loops.
         saturation_flat = None
