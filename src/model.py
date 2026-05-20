@@ -39,7 +39,12 @@ from .transformations import (
 )
 
 
-def format_posterior_label(param: str, dataset: MMMDataset, index: int | tuple[int, ...] | None = None) -> str:
+def format_posterior_label(
+    param: str,
+    dataset: MMMDataset,
+    index: int | tuple[int, ...] | None = None,
+    config: Optional["ModelConfig"] = None,
+) -> str:
     """Create readable posterior labels with business names instead of array indices."""
     if index is None:
         return param
@@ -49,9 +54,15 @@ def format_posterior_label(param: str, dataset: MMMDataset, index: int | tuple[i
         if (
             param in {"beta_tvc_innov", "beta_tvc_rw"}
             and len(index) == 2
-            and 0 <= index[1] < len(dataset.channel_names)
         ):
-            return f"{param}[t={index[0]}, channel={dataset.channel_names[index[1]]}]"
+            tvc_channel_names = dataset.channel_names
+            if config and config.tvc_channels:
+                dataset_idx = {ch.lower(): i for i, ch in enumerate(dataset.channel_names)}
+                resolved_idx = [dataset_idx[ch.lower()] for ch in config.tvc_channels if ch.lower() in dataset_idx]
+                if resolved_idx:
+                    tvc_channel_names = [dataset.channel_names[i] for i in resolved_idx]
+            if 0 <= index[1] < len(tvc_channel_names):
+                return f"{param}[t={index[0]}, channel={tvc_channel_names[index[1]]}]"
         return f"{param}[{','.join(str(i) for i in index)}]"
 
     if param == "beta" and 0 <= index < len(dataset.channel_names):
@@ -74,7 +85,7 @@ def format_posterior_label(param: str, dataset: MMMDataset, index: int | tuple[i
     return f"{param}[{index}]"
 
 
-def relabel_summary_index(summary_df, dataset: MMMDataset):
+def relabel_summary_index(summary_df, dataset: MMMDataset, config: Optional["ModelConfig"] = None):
     new_index = []
     for label in summary_df.index:
         if "[" in label and label.endswith("]"):
@@ -84,7 +95,7 @@ def relabel_summary_index(summary_df, dataset: MMMDataset):
                 parsed = tuple(int(p) for p in idx_parts)
                 if len(parsed) == 1:
                     parsed = parsed[0]
-                new_index.append(format_posterior_label(base, dataset, parsed))
+                new_index.append(format_posterior_label(base, dataset, parsed, config=config))
                 continue
         new_index.append(label)
     summary_df = summary_df.copy()
@@ -185,7 +196,7 @@ class MMMResults:
         vars_of_interest = ["beta", "saturation", "decay"]
         vars_present = [v for v in vars_of_interest if v in self.idata.posterior]
         summary = az.summary(self.idata, var_names=vars_present, round_to=4)
-        return relabel_summary_index(summary, self.dataset)
+        return relabel_summary_index(summary, self.dataset, self.config)
 
 
 # ---------------------------------------------------------------------------

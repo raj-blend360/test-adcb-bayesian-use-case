@@ -86,7 +86,7 @@ def check_convergence(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         summary = az.summary(idata, round_to=4)
-        summary = relabel_summary_index(summary, results.dataset)
+        summary = relabel_summary_index(summary, results.dataset, results.config)
         summary = _add_significance_flags(summary)
 
     if is_map:
