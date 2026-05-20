@@ -208,13 +208,40 @@ class BudgetOptimizer:
         cfg = results.config
         post = idata.posterior
 
+        def _channel_scalar_mean(var_name: str, channel_index: int, channel_name: str) -> float:
+            """Return a channel-specific posterior mean as a scalar.
+
+            Handles posterior arrays where channel can appear as a named dimension
+            (e.g., ``channel`` / ``channel_dim``) and where extra dimensions may
+            remain after averaging chain/draw.
+            """
+            arr = post[var_name].mean(("chain", "draw"))
+
+            # Prefer coordinate-based selection when available.
+            for dim in arr.dims:
+                dim_l = dim.lower()
+                if "channel" in dim_l:
+                    coord_vals = [str(v) for v in arr.coords[dim].values]
+                    if channel_name in coord_vals:
+                        arr = arr.sel({dim: channel_name})
+                    else:
+                        arr = arr.isel({dim: channel_index})
+                    break
+
+            vals = np.asarray(arr.values)
+            if vals.ndim > 0:
+                vals = vals.reshape(-1)
+            if vals.size != 1:
+                vals = np.array([vals.mean()])
+            return float(vals[0])
+
         channel_params = []
         for c, ch in enumerate(dataset.channel_names):
-            beta = float(post["beta"].mean(("chain", "draw")).values[c])
+            beta = _channel_scalar_mean("beta", c, ch)
             x_ref_max = float(dataset.spend_raw[:, c].max()) + 1e-8
 
             if cfg.apply_saturation and "saturation" in post:
-                gamma = float(np.asarray(post["saturation"].mean(("chain", "draw")).values).reshape(-1)[0])
+                gamma = _channel_scalar_mean("saturation", c, ch)
                 cp = ChannelParams(name=ch, saturation_type="hill", gamma=gamma, beta=beta, x_ref_max=x_ref_max)
             else:
                 cp = ChannelParams(name=ch, saturation_type="hill", gamma=1.0, beta=beta, x_ref_max=1.0)
