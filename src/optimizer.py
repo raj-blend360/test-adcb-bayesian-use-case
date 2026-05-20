@@ -229,11 +229,11 @@ class BudgetOptimizer:
                     break
 
             vals = np.asarray(arr.values)
-            if vals.ndim > 0:
-                vals = vals.reshape(-1)
-            if vals.size != 1:
-                vals = np.array([vals.mean()])
-            return float(vals[0])
+            if vals.size == 1:
+                return float(vals.item())
+
+            vals = vals.reshape(-1)
+            return float(vals.mean())
 
         channel_params = []
         for c, ch in enumerate(dataset.channel_names):
