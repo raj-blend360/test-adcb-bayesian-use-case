@@ -482,7 +482,17 @@ class BayesianMMM:
         else:
             rw_sigma = pm.Exponential("rw_sigma", lam=cfg.rw_sigma_rate, shape=len(tvc_idx))
 
-        beta_tvc_rw = pm.GaussianRandomWalk("beta_tvc_rw", sigma=rw_sigma, shape=(n_steps, len(tvc_idx)))
+        # NOTE: Avoid pm.GaussianRandomWalk here because some PyMC/PyTensor
+        # builds can raise `NotImplementedError: Logprob method not implemented
+        # for CumOp{-1, add}` during logp graph construction. Build the same
+        # random-walk process explicitly from Normal innovations + cumsum.
+        beta_tvc_innov = pm.Normal(
+            "beta_tvc_innov",
+            mu=0.0,
+            sigma=rw_sigma,
+            shape=(n_steps, len(tvc_idx)),
+        )
+        beta_tvc_rw = pm.Deterministic("beta_tvc_rw", pt.cumsum(beta_tvc_innov, axis=0))
         beta_tvc_steps = beta_tvc_rw + beta_init[tvc_idx]
         repeat_idx = np.minimum(np.arange(n_time) // max(1, int(cfg.tvc_frequency)), n_steps - 1)
         beta_tvc_full = beta_tvc_steps[repeat_idx]
