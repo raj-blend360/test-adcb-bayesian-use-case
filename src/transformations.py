@@ -140,6 +140,45 @@ def michaelis_menten_np(
     return vmax * x / (km + x + 1e-8)
 
 
+
+
+def create_fourier_features(
+    t: np.ndarray,
+    period: float,
+    order: int,
+    prefix: str,
+) -> tuple[np.ndarray, list[str]]:
+    """Vectorized Fourier basis features for seasonality modeling."""
+    t = np.asarray(t, dtype=float)
+    ks = np.arange(1, order + 1, dtype=float)
+    angles = 2.0 * np.pi * t[:, None] * ks[None, :] / float(period)
+    sin_feats = np.sin(angles)
+    cos_feats = np.cos(angles)
+    features = np.concatenate([sin_feats, cos_feats], axis=1)
+    names = [f"{prefix}_sin_{int(period)}_{k}" for k in ks.astype(int)] + [
+        f"{prefix}_cos_{int(period)}_{k}" for k in ks.astype(int)
+    ]
+    return features, names
+
+
+def build_laplace_seasonality_np(
+    t: np.ndarray,
+    omega: float,
+    decay_lambda: float,
+) -> np.ndarray:
+    """Laplace-like decaying sinusoid feature in NumPy for diagnostics/prediction."""
+    t = np.asarray(t, dtype=float)
+    return np.exp(-decay_lambda * t) * np.sin(omega * t)
+
+
+def build_laplace_seasonality_pt(
+    t: pt.TensorVariable,
+    omega: pt.TensorVariable,
+    decay_lambda: pt.TensorVariable,
+) -> pt.TensorVariable:
+    """PyTensor Laplace-like decaying sinusoid for Bayesian estimation."""
+    return pt.exp(-decay_lambda * t) * pt.sin(omega * t)
+
 # ===========================================================================
 # PyTensor / PyMC implementations (model graph use)
 # ===========================================================================

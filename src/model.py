@@ -34,6 +34,8 @@ import pytensor.tensor as pt
 from .data_processing import MMMDataset
 from .transformations import (
     hill_saturation_pt,
+    create_fourier_features,
+    build_laplace_seasonality_pt,
 )
 
 
@@ -120,6 +122,19 @@ class ModelConfig:
     saturation_alpha: float = 3.0
     saturation_beta: float = 3.0
 
+    # Time-varying media coefficients
+    use_time_varying_media: bool = True
+    use_dynamic_intercept: bool = True
+    rw_sigma_rate: float = 5.0
+    shared_rw_sigma: bool = True
+
+    # Extra seasonality
+    use_fourier_seasonality: bool = True
+    fourier_weekly_order: int = 2
+    fourier_monthly_order: int = 2
+    fourier_yearly_order: int = 3
+    use_laplace_seasonality: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Posterior summary
@@ -190,6 +205,7 @@ class BayesianMMM:
         """
         cfg = self.config
         spend_train, target_train, control_train = dataset.train_data()
+        n_time = spend_train.shape[0]
 
         # Resolve halo pairs before entering the model context
         ch_halo_idx = self._resolve_halo_pairs(cfg.halo_pairs, dataset.channel_names)
@@ -228,9 +244,9 @@ class BayesianMMM:
             n_channels = dataset.n_channels
             n_controls = dataset.n_controls
 
-            # ---- Channel-level priors -----------------------------------
-            beta_z = pm.Normal("beta_z", mu=0.0, sigma=1.0, shape=n_channels)
-            beta = pm.Deterministic("beta", 0.0 + cfg.beta_prior_sigma * beta_z)
+            # Time-varying coefficients capture media effectiveness drift over time
+            # while Gaussian random walks enforce smooth, non-jumpy temporal evolution.
+            beta = self.create_time_varying_beta(n_time=n_time, n_channels=n_channels, cfg=cfg)
 
             # Single optional media-transformation parameters
             if cfg.apply_adstock:
@@ -243,8 +259,29 @@ class BayesianMMM:
             if n_controls > 0:
                 gamma_ctrl = pm.Normal("gamma_ctrl", mu=0, sigma=0.5, shape=n_controls)
 
+            extra_fourier = np.zeros((n_time, 0))
+            if cfg.use_fourier_seasonality:
+                extra_fourier, _ = self.build_fourier_seasonality(n_time, cfg)
+            if extra_fourier.shape[1] > 0:
+                fourier_data = pm.Data("fourier_features", extra_fourier)
+                gamma_fourier = pm.Normal("gamma_fourier", mu=0.0, sigma=0.3, shape=extra_fourier.shape[1])
+
+            if cfg.use_laplace_seasonality:
+                t_idx = pt.arange(n_time, dtype="float64")
+                laplace_lambda = pm.Exponential("laplace_lambda", lam=2.0)
+                laplace_omega = pm.HalfNormal("laplace_omega", sigma=0.5)
+                laplace_amp = pm.Normal("laplace_amp", mu=0.0, sigma=0.3)
+                laplace_term = laplace_amp * build_laplace_seasonality_pt(t_idx, laplace_omega, laplace_lambda)
+            else:
+                laplace_term = pt.zeros(n_time)
+
             # ---- Base conversions (intercept) ---------------------------
             base = pm.Normal("base", mu=0, sigma=1.0)
+            if cfg.use_dynamic_intercept:
+                base_rw_sigma = pm.Exponential("base_rw_sigma", lam=cfg.rw_sigma_rate)
+                base_t = pm.GaussianRandomWalk("base_t", sigma=base_rw_sigma, shape=n_time)
+            else:
+                base_t = pt.zeros(n_time)
 
             # ---- Observation noise --------------------------------------
             sigma = pm.HalfNormal("sigma", sigma=0.5)
@@ -269,8 +306,7 @@ class BayesianMMM:
             else:
                 sat_matrix = adstocked
 
-            contrib_stack = sat_matrix * beta
-            media_total = contrib_stack.sum(axis=1)
+            contrib_stack, media_total = self.apply_time_varying_coefficients(sat_matrix, beta)
 
             # ---- Halo effects (channel-level) ---------------------------
             halo_total = pt.zeros(spend_data.shape[0])
@@ -300,7 +336,11 @@ class BayesianMMM:
                 ctrl_total = pt.dot(control_data, gamma_ctrl)
 
             # ---- Expected outcome ---------------------------------------
-            mu = base + media_total + halo_total + ctrl_total
+            fourier_total = pt.zeros(spend_data.shape[0])
+            if cfg.use_fourier_seasonality and extra_fourier.shape[1] > 0:
+                fourier_total = pt.dot(fourier_data, gamma_fourier)
+
+            mu = base + base_t + media_total + halo_total + ctrl_total + fourier_total + laplace_term
 
             # ---- Likelihood ---------------------------------------------
             pm.Normal("y", mu=mu, sigma=sigma, observed=target_obs)
@@ -400,6 +440,61 @@ class BayesianMMM:
             dataset=dataset,
         )
 
+
+    def create_time_varying_beta(
+        self,
+        n_time: int,
+        n_channels: int,
+        cfg: ModelConfig,
+    ) -> pt.TensorVariable:
+        """Create smooth channel-time betas using Gaussian random walks."""
+        if cfg.shared_rw_sigma:
+            rw_sigma = pm.Exponential("rw_sigma", lam=cfg.rw_sigma_rate)
+        else:
+            rw_sigma = pm.Exponential("rw_sigma", lam=cfg.rw_sigma_rate, shape=n_channels)
+
+        if cfg.use_time_varying_media:
+            beta_init = pm.Normal("beta_init", mu=0.0, sigma=cfg.beta_prior_sigma, shape=n_channels)
+            beta_t = pm.GaussianRandomWalk(
+                "beta_t",
+                sigma=rw_sigma,
+                shape=(n_time, n_channels),
+            )
+            beta_full = pm.Deterministic("beta", beta_t + beta_init)
+        else:
+            beta_z = pm.Normal("beta_z", mu=0.0, sigma=1.0, shape=n_channels)
+            beta_static = pm.Deterministic("beta", cfg.beta_prior_sigma * beta_z)
+            beta_full = pt.repeat(beta_static.dimshuffle("x", 0), n_time, axis=0)
+
+        return beta_full
+
+    @staticmethod
+    def apply_time_varying_coefficients(
+        transformed_media: pt.TensorVariable,
+        beta_t: pt.TensorVariable,
+    ) -> tuple[pt.TensorVariable, pt.TensorVariable]:
+        """Apply time-varying coefficients in vectorized form."""
+        contrib_stack = transformed_media * beta_t
+        media_total = contrib_stack.sum(axis=1)
+        return contrib_stack, media_total
+
+    @staticmethod
+    def build_fourier_seasonality(n_time: int, cfg: ModelConfig) -> tuple[np.ndarray, list[str]]:
+        t = np.arange(n_time, dtype=float)
+        feats = []
+        names = []
+        if cfg.fourier_weekly_order > 0:
+            f, n = create_fourier_features(t, period=7.0, order=cfg.fourier_weekly_order, prefix="weekly")
+            feats.append(f); names.extend(n)
+        if cfg.fourier_monthly_order > 0:
+            f, n = create_fourier_features(t, period=30.4, order=cfg.fourier_monthly_order, prefix="monthly")
+            feats.append(f); names.extend(n)
+        if cfg.fourier_yearly_order > 0:
+            f, n = create_fourier_features(t, period=365.25, order=cfg.fourier_yearly_order, prefix="yearly")
+            feats.append(f); names.extend(n)
+        if not feats:
+            return np.zeros((n_time, 0)), []
+        return np.concatenate(feats, axis=1), names
 
     def _precompute_adstock_matrix(self, spend: np.ndarray, cfg: ModelConfig) -> np.ndarray:
         """Precompute adstock outside PyMC to avoid expensive scan ops."""

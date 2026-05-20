@@ -724,3 +724,23 @@ def plot_channel_contribution_share(
     plt.tight_layout()
     _save(fig, save_path)
     return fig
+
+
+def plot_tvc_evolution(beta_mean: np.ndarray, beta_hdi: np.ndarray, dates: np.ndarray, channel_names: list[str], save_path: Optional[str] = None) -> plt.Figure:
+    """Plot posterior mean and HDI for time-varying channel coefficients."""
+    n = len(channel_names)
+    fig, axes = plt.subplots(n, 1, figsize=(14, max(3, 2.5 * n)), sharex=True)
+    if n == 1:
+        axes = [axes]
+    for i, ch in enumerate(channel_names):
+        ax = axes[i]
+        ax.plot(dates, beta_mean[:, i], lw=1.8, color=PALETTE[i % len(PALETTE)], label=f"{ch} mean")
+        ax.fill_between(dates, beta_hdi[:, i, 0], beta_hdi[:, i, 1], alpha=0.25, color=PALETTE[i % len(PALETTE)])
+        ax.axhline(0, color="black", lw=0.8, ls="--")
+        ax.set_ylabel("Beta")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+    axes[0].set_title("Time-Varying Media Coefficients", fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    _save(fig, save_path)
+    return fig
