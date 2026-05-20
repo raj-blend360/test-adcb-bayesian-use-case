@@ -237,7 +237,9 @@ class BudgetOptimizer:
 
         channel_params = []
         for c, ch in enumerate(dataset.channel_names):
-            beta = _channel_scalar_mean("beta", c, ch)
+            # Soft positivity constraint for downstream planning/output:
+            # clamp negative posterior beta means to zero.
+            beta = max(0.0, _channel_scalar_mean("beta", c, ch))
             x_ref_max = float(dataset.spend_raw[:, c].max()) + 1e-8
 
             if cfg.apply_saturation and "saturation" in post:

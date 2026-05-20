@@ -63,7 +63,7 @@ def _add_significance_flags(summary: pd.DataFrame) -> pd.DataFrame:
 
 def check_convergence(
     results: MMMResults,
-    rhat_threshold: float = 1.05,
+    rhat_threshold: float = 1.01,
     ess_threshold: int = 400,
 ) -> pd.DataFrame:
     """Compute R-hat and ESS for all sampled variables.
@@ -201,7 +201,7 @@ def out_of_sample_validation(
     n_channels = dataset.n_channels
 
     # Posterior means
-    beta_mean = post["beta"].mean(("chain", "draw")).values  # (C,)
+    beta_mean = np.clip(post["beta"].mean(("chain", "draw")).values, 0.0, None)  # (C,)
     base_mean = float(post["base"].mean(("chain", "draw")).values)
 
     gamma_mean = post["saturation"].mean(("chain", "draw")).values if cfg.apply_saturation and "saturation" in post else None
