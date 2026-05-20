@@ -146,6 +146,11 @@ class ModelConfig:
     beta_prior_sigma: float = 0.3
     saturation_alpha: float = 3.0
     saturation_beta: float = 3.0
+    decay_alpha: float = 3.0
+    decay_beta: float = 3.0
+    channel_beta_prior_sigma: dict[str, float] = field(default_factory=dict)
+    channel_decay_prior: dict[str, tuple[float, float]] = field(default_factory=dict)
+    channel_saturation_prior: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     # Time-varying media coefficients
     use_time_varying_media: bool = True
@@ -281,11 +286,24 @@ class BayesianMMM:
             )
 
             # Single optional media-transformation parameters
+            decay_alpha, decay_beta = self._resolve_channel_beta_priors(
+                channel_names=dataset.channel_names,
+                per_channel=cfg.channel_decay_prior,
+                default_alpha=cfg.decay_alpha,
+                default_beta=cfg.decay_beta,
+            )
+            sat_alpha, sat_beta = self._resolve_channel_beta_priors(
+                channel_names=dataset.channel_names,
+                per_channel=cfg.channel_saturation_prior,
+                default_alpha=cfg.saturation_alpha,
+                default_beta=cfg.saturation_beta,
+            )
+
             if cfg.apply_adstock:
-                decay = pm.Beta("decay", alpha=3, beta=3)
+                decay = pm.Beta("decay", alpha=decay_alpha, beta=decay_beta, shape=n_channels)
 
             if cfg.apply_saturation:
-                saturation = pm.Beta("saturation", alpha=cfg.saturation_alpha, beta=cfg.saturation_beta)
+                saturation = pm.Beta("saturation", alpha=sat_alpha, beta=sat_beta, shape=n_channels)
 
             # ---- Control / seasonality priors ---------------------------
             if n_controls > 0:
@@ -491,11 +509,17 @@ class BayesianMMM:
         ) if cfg.tvc_channels else list(range(n_channels))
         static_idx = [i for i in range(n_channels) if i not in tvc_idx]
 
+        beta_sigma = self._resolve_channel_prior_sigma(
+            channel_names=channel_names or [str(i) for i in range(n_channels)],
+            default_sigma=cfg.beta_prior_sigma,
+            per_channel=cfg.channel_beta_prior_sigma,
+        )
+
         beta_init = pt.zeros((n_channels,))
         if static_idx:
             beta_init_static = pm.HalfNormal(
                 "beta_init_static",
-                sigma=cfg.beta_prior_sigma,
+                sigma=beta_sigma[static_idx],
                 shape=len(static_idx),
             )
             beta_init = pt.set_subtensor(beta_init[static_idx], beta_init_static)
@@ -503,7 +527,7 @@ class BayesianMMM:
             beta_init_tvc = pm.Normal(
                 "beta_init_tvc",
                 mu=0.0,
-                sigma=cfg.beta_prior_sigma,
+                sigma=beta_sigma[tvc_idx],
                 shape=len(tvc_idx),
             )
             beta_init = pt.set_subtensor(beta_init[tvc_idx], beta_init_tvc)
@@ -546,6 +570,34 @@ class BayesianMMM:
         if static_idx:
             beta_full = pt.set_subtensor(beta_full[:, static_idx], pt.repeat(beta_init[static_idx].dimshuffle("x", 0), n_time, axis=0))
         return pm.Deterministic("beta", beta_full)
+
+    @staticmethod
+    def _resolve_channel_prior_sigma(
+        channel_names: list[str],
+        default_sigma: float,
+        per_channel: Optional[dict[str, float]] = None,
+    ) -> np.ndarray:
+        sigma = np.full((len(channel_names),), float(default_sigma), dtype=float)
+        for i, ch in enumerate(channel_names):
+            if per_channel and ch in per_channel:
+                sigma[i] = max(1e-6, float(per_channel[ch]))
+        return sigma
+
+    @staticmethod
+    def _resolve_channel_beta_priors(
+        channel_names: list[str],
+        per_channel: Optional[dict[str, tuple[float, float]]],
+        default_alpha: float,
+        default_beta: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        alpha = np.full((len(channel_names),), float(default_alpha), dtype=float)
+        beta = np.full((len(channel_names),), float(default_beta), dtype=float)
+        for i, ch in enumerate(channel_names):
+            if per_channel and ch in per_channel:
+                a, b = per_channel[ch]
+                alpha[i] = max(1e-6, float(a))
+                beta[i] = max(1e-6, float(b))
+        return alpha, beta
 
     @staticmethod
     def apply_time_varying_coefficients(

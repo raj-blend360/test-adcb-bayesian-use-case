@@ -101,6 +101,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--channel-inputs", nargs="*", default=[], dest="channel_inputs",
                    help="Per-channel input metric as Channel:metric (metric in {impressions,clicks,spends})")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
+    p.add_argument(
+        "--channel-beta-prior-json",
+        default=None,
+        dest="channel_beta_prior_json",
+        help="Optional JSON map of per-channel beta prior sigma, e.g. '{\"TV\":0.2,\"Digital\":0.5}'.",
+    )
+    p.add_argument(
+        "--channel-adstock-prior-json",
+        default=None,
+        dest="channel_adstock_prior_json",
+        help="Optional JSON map of per-channel adstock Beta(alpha,beta), e.g. '{\"TV\":[2,5],\"Digital\":[3,3]}'.",
+    )
+    p.add_argument(
+        "--channel-saturation-prior-json",
+        default=None,
+        dest="channel_saturation_prior_json",
+        help="Optional JSON map of per-channel saturation Beta(alpha,beta), e.g. '{\"TV\":[4,2],\"Digital\":[3,3]}'.",
+    )
     p.add_argument("--random-holdout", action="store_true", dest="random_holdout",
                    help="Randomly select holdout periods instead of using the most recent periods")
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
@@ -203,6 +221,36 @@ def _parse_channel_inputs(raw: list[str]) -> dict[str, str]:
         if channel and metric in valid:
             mapping[channel] = metric
     return mapping
+
+
+def _parse_channel_float_map(raw: str | None) -> dict[str, float]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}
+        return {str(k): float(v) for k, v in data.items()}
+    except Exception as e:
+        print(f"  [warn] Invalid channel float JSON map ({e}). Ignoring.")
+        return {}
+
+
+def _parse_channel_pair_map(raw: str | None) -> dict[str, tuple[float, float]]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}
+        out: dict[str, tuple[float, float]] = {}
+        for k, v in data.items():
+            if isinstance(v, (list, tuple)) and len(v) == 2:
+                out[str(k)] = (float(v[0]), float(v[1]))
+        return out
+    except Exception as e:
+        print(f"  [warn] Invalid channel pair JSON map ({e}). Ignoring.")
+        return {}
 
 
 def _apply_channel_inputs(channel_df: pd.DataFrame, mapping: dict[str, str]) -> tuple[pd.DataFrame, dict[str, str]]:
@@ -481,12 +529,17 @@ def step_fit_model(dataset, args) -> "MMMResults":
 
     ch_halo_pairs, camp_halo_pairs, min_halo_spend = _resolve_halo_from_args(args)
     inference = "map" if args.fast else ("advi" if args.advi else "mcmc")
+    channel_beta_prior_sigma = _parse_channel_float_map(args.channel_beta_prior_json)
+    channel_adstock_prior = _parse_channel_pair_map(args.channel_adstock_prior_json)
+    channel_saturation_prior = _parse_channel_pair_map(args.channel_saturation_prior_json)
 
     cfg = ModelConfig(
         apply_adstock=not args.no_adstock,
         apply_saturation=not args.no_saturation,
         adstock_max_lag=8,
         beta_prior_sigma=0.3,
+        channel_beta_prior_sigma=channel_beta_prior_sigma,
+        channel_decay_prior=channel_adstock_prior,
         halo_pairs=ch_halo_pairs,
         campaign_halo_pairs=camp_halo_pairs,
         min_halo_spend=min_halo_spend,
@@ -499,6 +552,7 @@ def step_fit_model(dataset, args) -> "MMMResults":
         nuts_sampler=args.nuts_sampler,
         nuts_init=args.nuts_init,
         inference=inference,
+        channel_saturation_prior=channel_saturation_prior,
         tvc_channels=args.tvc_channels,
         tvc_frequency=max(1, int(args.tvc_frequency)),
         use_dynamic_intercept=bool(args.base_tvc),
@@ -510,6 +564,12 @@ def step_fit_model(dataset, args) -> "MMMResults":
     print(f"  Channel halo pairs : {ch_halo_pairs}")
     print(f"  Campaign halo pairs: {camp_halo_pairs}")
     print(f"  TVC channels        : {args.tvc_channels if args.tvc_channels else 'all'}")
+    if channel_beta_prior_sigma:
+        print(f"  Channel beta priors : {channel_beta_prior_sigma}")
+    if channel_adstock_prior:
+        print(f"  Channel adstock priors : {channel_adstock_prior}")
+    if channel_saturation_prior:
+        print(f"  Channel saturation priors : {channel_saturation_prior}")
     print(f"  TVC frequency       : every {max(1, int(args.tvc_frequency))} period(s)")
     print(f"  Base TVC            : {'ON' if args.base_tvc else 'OFF'}")
     if inference == "mcmc":
