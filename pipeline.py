@@ -90,6 +90,13 @@ def parse_args() -> argparse.Namespace:
         dest="tvc_frequency",
         help="Update frequency for time-varying coefficients in periods (1=every period, 2=every other period, ...).",
     )
+    p.add_argument(
+        "--base-tvc",
+        dest="base_tvc",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable a time-varying base intercept (default: enabled).",
+    )
     p.add_argument("--weeks", type=int, default=68, help="Synthetic dataset weeks")
     p.add_argument("--channel-inputs", nargs="*", default=[], dest="channel_inputs",
                    help="Per-channel input metric as Channel:metric (metric in {impressions,clicks,spends})")
@@ -494,6 +501,7 @@ def step_fit_model(dataset, args) -> "MMMResults":
         inference=inference,
         tvc_channels=args.tvc_channels,
         tvc_frequency=max(1, int(args.tvc_frequency)),
+        use_dynamic_intercept=bool(args.base_tvc),
     )
 
     print(f"  Inference          : {inference}")
@@ -503,6 +511,7 @@ def step_fit_model(dataset, args) -> "MMMResults":
     print(f"  Campaign halo pairs: {camp_halo_pairs}")
     print(f"  TVC channels        : {args.tvc_channels if args.tvc_channels else 'all'}")
     print(f"  TVC frequency       : every {max(1, int(args.tvc_frequency))} period(s)")
+    print(f"  Base TVC            : {'ON' if args.base_tvc else 'OFF'}")
     if inference == "mcmc":
         print(f"  Samples            : {args.samples} × {args.chains} chains")
         print(f"  NUTS backend       : {args.nuts_sampler}")
