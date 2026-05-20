@@ -124,6 +124,8 @@ class ModelConfig:
 
     # Time-varying media coefficients
     use_time_varying_media: bool = True
+    tvc_channels: Optional[list[str]] = None
+    tvc_frequency: int = 1
     use_dynamic_intercept: bool = True
     rw_sigma_rate: float = 5.0
     shared_rw_sigma: bool = True
@@ -246,7 +248,12 @@ class BayesianMMM:
 
             # Time-varying coefficients capture media effectiveness drift over time
             # while Gaussian random walks enforce smooth, non-jumpy temporal evolution.
-            beta = self.create_time_varying_beta(n_time=n_time, n_channels=n_channels, cfg=cfg)
+            beta = self.create_time_varying_beta(
+                n_time=n_time,
+                n_channels=n_channels,
+                cfg=cfg,
+                channel_names=dataset.channel_names,
+            )
 
             # Single optional media-transformation parameters
             if cfg.apply_adstock:
@@ -446,27 +453,43 @@ class BayesianMMM:
         n_time: int,
         n_channels: int,
         cfg: ModelConfig,
+        channel_names: Optional[list[str]] = None,
     ) -> pt.TensorVariable:
         """Create smooth channel-time betas using Gaussian random walks."""
+        beta_init = pm.Normal("beta_init", mu=0.0, sigma=cfg.beta_prior_sigma, shape=n_channels)
+
+        if not cfg.use_time_varying_media:
+            beta_static = pm.Deterministic("beta_static", beta_init)
+            return pt.repeat(beta_static.dimshuffle("x", 0), n_time, axis=0)
+
+        ch_to_idx = {name: i for i, name in enumerate(channel_names or [])}
+        tvc_idx = sorted(
+            {
+                ch_to_idx[ch]
+                for ch in (cfg.tvc_channels or [])
+                if ch in ch_to_idx
+            }
+        ) if cfg.tvc_channels else list(range(n_channels))
+        static_idx = [i for i in range(n_channels) if i not in tvc_idx]
+
+        beta_full = pt.repeat(beta_init.dimshuffle("x", 0), n_time, axis=0)
+        if not tvc_idx:
+            return pm.Deterministic("beta", beta_full)
+
+        n_steps = int(np.ceil(n_time / max(1, int(cfg.tvc_frequency))))
         if cfg.shared_rw_sigma:
             rw_sigma = pm.Exponential("rw_sigma", lam=cfg.rw_sigma_rate)
         else:
-            rw_sigma = pm.Exponential("rw_sigma", lam=cfg.rw_sigma_rate, shape=n_channels)
+            rw_sigma = pm.Exponential("rw_sigma", lam=cfg.rw_sigma_rate, shape=len(tvc_idx))
 
-        if cfg.use_time_varying_media:
-            beta_init = pm.Normal("beta_init", mu=0.0, sigma=cfg.beta_prior_sigma, shape=n_channels)
-            beta_t = pm.GaussianRandomWalk(
-                "beta_t",
-                sigma=rw_sigma,
-                shape=(n_time, n_channels),
-            )
-            beta_full = pm.Deterministic("beta", beta_t + beta_init)
-        else:
-            beta_z = pm.Normal("beta_z", mu=0.0, sigma=1.0, shape=n_channels)
-            beta_static = pm.Deterministic("beta", cfg.beta_prior_sigma * beta_z)
-            beta_full = pt.repeat(beta_static.dimshuffle("x", 0), n_time, axis=0)
-
-        return beta_full
+        beta_tvc_rw = pm.GaussianRandomWalk("beta_tvc_rw", sigma=rw_sigma, shape=(n_steps, len(tvc_idx)))
+        beta_tvc_steps = beta_tvc_rw + beta_init[tvc_idx]
+        repeat_idx = np.minimum(np.arange(n_time) // max(1, int(cfg.tvc_frequency)), n_steps - 1)
+        beta_tvc_full = beta_tvc_steps[repeat_idx]
+        beta_full = pt.set_subtensor(beta_full[:, tvc_idx], beta_tvc_full)
+        if static_idx:
+            beta_full = pt.set_subtensor(beta_full[:, static_idx], pt.repeat(beta_init[static_idx].dimshuffle("x", 0), n_time, axis=0))
+        return pm.Deterministic("beta", beta_full)
 
     @staticmethod
     def apply_time_varying_coefficients(

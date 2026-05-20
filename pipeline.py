@@ -76,6 +76,20 @@ def parse_args() -> argparse.Namespace:
                    help="NUTS backend for MCMC (numpyro is usually fastest)")
     p.add_argument("--nuts-init", default="jitter+adapt_diag", dest="nuts_init",
                    help="NUTS initialization strategy")
+    p.add_argument(
+        "--tvc-channels",
+        nargs="*",
+        default=None,
+        dest="tvc_channels",
+        help="Optional subset of channels to use time-varying coefficients for (default: all channels).",
+    )
+    p.add_argument(
+        "--tvc-frequency",
+        type=int,
+        default=1,
+        dest="tvc_frequency",
+        help="Update frequency for time-varying coefficients in periods (1=every period, 2=every other period, ...).",
+    )
     p.add_argument("--weeks", type=int, default=68, help="Synthetic dataset weeks")
     p.add_argument("--channel-inputs", nargs="*", default=[], dest="channel_inputs",
                    help="Per-channel input metric as Channel:metric (metric in {impressions,clicks,spends})")
@@ -478,6 +492,8 @@ def step_fit_model(dataset, args) -> "MMMResults":
         nuts_sampler=args.nuts_sampler,
         nuts_init=args.nuts_init,
         inference=inference,
+        tvc_channels=args.tvc_channels,
+        tvc_frequency=max(1, int(args.tvc_frequency)),
     )
 
     print(f"  Inference          : {inference}")
@@ -485,6 +501,8 @@ def step_fit_model(dataset, args) -> "MMMResults":
     print(f"  Saturation         : {'ON (Hill)' if cfg.apply_saturation else 'OFF'}")
     print(f"  Channel halo pairs : {ch_halo_pairs}")
     print(f"  Campaign halo pairs: {camp_halo_pairs}")
+    print(f"  TVC channels        : {args.tvc_channels if args.tvc_channels else 'all'}")
+    print(f"  TVC frequency       : every {max(1, int(args.tvc_frequency))} period(s)")
     if inference == "mcmc":
         print(f"  Samples            : {args.samples} × {args.chains} chains")
         print(f"  NUTS backend       : {args.nuts_sampler}")
