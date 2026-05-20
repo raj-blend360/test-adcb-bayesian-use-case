@@ -39,10 +39,20 @@ from .transformations import (
 )
 
 
-def format_posterior_label(param: str, dataset: MMMDataset, index: int | None = None) -> str:
+def format_posterior_label(param: str, dataset: MMMDataset, index: int | tuple[int, ...] | None = None) -> str:
     """Create readable posterior labels with business names instead of array indices."""
     if index is None:
         return param
+
+    if isinstance(index, tuple):
+        # Time-varying innovations/rw tensors are shaped (time_step, channel).
+        if (
+            param in {"beta_tvc_innov", "beta_tvc_rw"}
+            and len(index) == 2
+            and 0 <= index[1] < len(dataset.channel_names)
+        ):
+            return f"{param}[t={index[0]}, channel={dataset.channel_names[index[1]]}]"
+        return f"{param}[{','.join(str(i) for i in index)}]"
 
     if param == "beta" and 0 <= index < len(dataset.channel_names):
         return f"beta_{dataset.channel_names[index]}"
@@ -69,8 +79,12 @@ def relabel_summary_index(summary_df, dataset: MMMDataset):
     for label in summary_df.index:
         if "[" in label and label.endswith("]"):
             base, idx_txt = label[:-1].split("[", 1)
-            if idx_txt.isdigit():
-                new_index.append(format_posterior_label(base, dataset, int(idx_txt)))
+            idx_parts = [p.strip() for p in idx_txt.split(",")]
+            if idx_parts and all(p.lstrip("-").isdigit() for p in idx_parts):
+                parsed = tuple(int(p) for p in idx_parts)
+                if len(parsed) == 1:
+                    parsed = parsed[0]
+                new_index.append(format_posterior_label(base, dataset, parsed))
                 continue
         new_index.append(label)
     summary_df = summary_df.copy()
