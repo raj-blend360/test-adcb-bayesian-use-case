@@ -664,9 +664,20 @@ class BayesianMMM:
 
         # Pull posterior samples
         post = idata.posterior
-        beta_samples = post["beta"].values  # (chains, draws, C)
-        _, _, n_ch = beta_samples.shape
-        beta_flat = beta_samples.reshape(-1, n_ch)
+        beta_samples = post["beta"].values
+        # beta can be either (chains, draws, channels) for static coefficients
+        # or (chains, draws, time, channels) when time-varying coefficients are enabled.
+        if beta_samples.ndim == 3:
+            _, _, n_ch = beta_samples.shape
+            beta_flat = beta_samples.reshape(-1, n_ch)
+        elif beta_samples.ndim == 4:
+            # Aggregate across time to produce a single response curve per channel.
+            _, _, _, n_ch = beta_samples.shape
+            beta_flat = beta_samples.mean(axis=2).reshape(-1, n_ch)
+        else:
+            raise ValueError(
+                f"Unexpected beta posterior shape {beta_samples.shape}; expected 3D or 4D tensor."
+            )
 
         # Flatten parameter tensors once to avoid repeated reshape + Python loops.
         saturation_flat = None
