@@ -31,6 +31,7 @@ export default function TransformPage() {
   const [includeHoliday, setIncludeHoliday] = useState(true)
   const [includePromo, setIncludePromo] = useState(false)
   const [testWeeks, setTestWeeks] = useState(12)
+  const [randomHoldout, setRandomHoldout] = useState(false)
   const [channelConfigs, setChannelConfigs] = useState<ReturnType<typeof defaultChannelConfig>[]>([])
   const [previewData, setPreviewData] = useState<any>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -82,6 +83,8 @@ export default function TransformPage() {
       seasonality_periods: [52.0, 26.0],
       n_harmonics: 2,
       test_weeks: testWeeks,
+      random_holdout: randomHoldout,
+      holdout_seed: 42,
       channels: channelConfigs,
     }
   }
@@ -172,6 +175,15 @@ export default function TransformPage() {
                 <span className="text-sm text-gray-700">{label}</span>
               </label>
             ))}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={randomHoldout}
+                onChange={(e) => setRandomHoldout(e.target.checked)}
+                className="rounded border-gray-300 text-blue-600"
+              />
+              <span className="text-sm text-gray-700">Random holdout periods</span>
+            </label>
             <label className="flex items-center gap-2">
               <span className="text-sm text-gray-700">Test weeks</span>
               <input

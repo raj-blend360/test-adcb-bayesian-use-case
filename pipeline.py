@@ -80,6 +80,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--channel-inputs", nargs="*", default=[], dest="channel_inputs",
                    help="Per-channel input metric as Channel:metric (metric in {impressions,clicks,spends})")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
+    p.add_argument("--random-holdout", action="store_true", dest="random_holdout",
+                   help="Randomly select holdout periods instead of using the most recent periods")
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
     p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30%% bounds")
     p.add_argument(
@@ -393,6 +395,8 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
         seasonality_periods=seasonality_periods,
         n_harmonics=2,
         control_cols=requested_controls,
+        random_holdout=args.random_holdout,
+        holdout_seed=args.seed,
     )
     processor = DataProcessor(cfg)
     dataset = processor.prepare(channel_df, campaign_df=campaign_df)
@@ -403,6 +407,7 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     print(f"  Granularity   : {granularity}")
     print(f"  Train periods : {dataset.train_mask.sum()}")
     print(f"  Test periods  : {dataset.test_mask.sum()}")
+    print(f"  Holdout mode  : {'random' if args.random_holdout else 'last-n'}")
     print("  Input metric by channel:")
     for ch in dataset.channel_names:
         print(f"    {ch:<20} {used_inputs.get(ch, 'clicks')}")

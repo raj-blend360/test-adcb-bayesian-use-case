@@ -49,6 +49,8 @@ class TransformConfigRequest(BaseModel):
     seasonality_periods: list[float] = [52.0, 26.0]
     n_harmonics: int = 2
     test_weeks: int = 12
+    random_holdout: bool = False
+    holdout_seed: int = 42
     channels: list[ChannelTransformConfig] = []
 
 
@@ -81,6 +83,8 @@ class FitRequest(BaseModel):
         ),
     )
     transform_config_id: Optional[int] = None
+    random_holdout: bool = False
+    holdout_seed: int = 42
 
 
 # ─── Results ─────────────────────────────────────────────────────────────────

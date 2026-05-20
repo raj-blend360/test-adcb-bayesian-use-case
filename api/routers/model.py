@@ -178,9 +178,13 @@ def _run_fit(run_id: int, req_dict: dict):
             },
         )
 
+        holdout_seed = int(transform_config.get("holdout_seed", req.holdout_seed))
+        random_holdout = bool(transform_config.get("random_holdout", req.random_holdout))
         dc = DataConfig(
             include_seasonality=transform_config.get("include_seasonality", True),
-            test_weeks=transform_config.get("test_weeks", 12),
+            test_periods=transform_config.get("test_weeks", 12),
+            random_holdout=random_holdout,
+            holdout_seed=holdout_seed,
         )
         processor = DataProcessor(dc)
         dataset = processor.prepare(channel_df, campaign_df)
