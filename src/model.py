@@ -481,12 +481,6 @@ class BayesianMMM:
         channel_names: Optional[list[str]] = None,
     ) -> pt.TensorVariable:
         """Create smooth channel-time betas using Gaussian random walks."""
-        beta_init = pm.Normal("beta_init", mu=0.0, sigma=cfg.beta_prior_sigma, shape=n_channels)
-
-        if not cfg.use_time_varying_media:
-            beta_static = pm.Deterministic("beta_static", beta_init)
-            return pt.repeat(beta_static.dimshuffle("x", 0), n_time, axis=0)
-
         ch_to_idx = {name: i for i, name in enumerate(channel_names or [])}
         tvc_idx = sorted(
             {
@@ -497,15 +491,42 @@ class BayesianMMM:
         ) if cfg.tvc_channels else list(range(n_channels))
         static_idx = [i for i in range(n_channels) if i not in tvc_idx]
 
+        beta_init = pt.zeros((n_channels,))
+        if static_idx:
+            beta_init_static = pm.HalfNormal(
+                "beta_init_static",
+                sigma=cfg.beta_prior_sigma,
+                shape=len(static_idx),
+            )
+            beta_init = pt.set_subtensor(beta_init[static_idx], beta_init_static)
+        if tvc_idx:
+            beta_init_tvc = pm.Normal(
+                "beta_init_tvc",
+                mu=0.0,
+                sigma=cfg.beta_prior_sigma,
+                shape=len(tvc_idx),
+            )
+            beta_init = pt.set_subtensor(beta_init[tvc_idx], beta_init_tvc)
+        beta_init = pm.Deterministic("beta_init", beta_init)
+
+        if channel_names and len(channel_names) == n_channels:
+            for i, ch in enumerate(channel_names):
+                safe_name = str(ch).replace(" ", "_").replace("/", "_")
+                pm.Deterministic(f"beta_init[{safe_name}]", beta_init[i])
+
+        if not cfg.use_time_varying_media:
+            beta_static = pm.Deterministic("beta_static", beta_init)
+            return pt.repeat(beta_static.dimshuffle("x", 0), n_time, axis=0)
+
         beta_full = pt.repeat(beta_init.dimshuffle("x", 0), n_time, axis=0)
         if not tvc_idx:
             return pm.Deterministic("beta", beta_full)
 
         n_steps = int(np.ceil(n_time / max(1, int(cfg.tvc_frequency))))
         if cfg.shared_rw_sigma:
-            rw_sigma = pm.Exponential("rw_sigma", lam=cfg.rw_sigma_rate)
+            rw_sigma = pm.HalfNormal("rw_sigma", sigma=0.05)
         else:
-            rw_sigma = pm.Exponential("rw_sigma", lam=cfg.rw_sigma_rate, shape=len(tvc_idx))
+            rw_sigma = pm.HalfNormal("rw_sigma", sigma=0.05, shape=len(tvc_idx))
 
         # NOTE: Avoid pm.GaussianRandomWalk here because some PyMC/PyTensor
         # builds can raise `NotImplementedError: Logprob method not implemented
@@ -518,7 +539,7 @@ class BayesianMMM:
             shape=(n_steps, len(tvc_idx)),
         )
         beta_tvc_rw = pm.Deterministic("beta_tvc_rw", pt.cumsum(beta_tvc_innov, axis=0))
-        beta_tvc_steps = beta_tvc_rw + beta_init[tvc_idx]
+        beta_tvc_steps = pm.Deterministic("beta_tvc_steps", pt.softplus(beta_tvc_rw + beta_init[tvc_idx]))
         repeat_idx = np.minimum(np.arange(n_time) // max(1, int(cfg.tvc_frequency)), n_steps - 1)
         beta_tvc_full = beta_tvc_steps[repeat_idx]
         beta_full = pt.set_subtensor(beta_full[:, tvc_idx], beta_tvc_full)
