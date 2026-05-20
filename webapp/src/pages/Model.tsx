@@ -36,6 +36,7 @@ export default function ModelPage() {
   const runningJobId = useStore((s) => s.runningJobId)
   const setRunningJobId = useStore((s) => s.setRunningJobId)
   const setActiveModelId = useStore((s) => s.setActiveModelId)
+  const transformConfig = useStore((s) => s.transformConfig)
 
   const [method, setMethod] = useState('map')
   const [samples, setSamples] = useState(1000)
@@ -96,6 +97,8 @@ export default function ModelPage() {
       target_accept: targetAccept,
       halo_pairs: haloPairs,
       min_halo_spend: minHaloSpend,
+      random_holdout: Boolean((transformConfig as any)?.random_holdout),
+      holdout_seed: Number((transformConfig as any)?.holdout_seed ?? 42),
     })
   }
 

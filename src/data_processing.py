@@ -113,6 +113,8 @@ class DataConfig:
 
     # Train / test split
     test_periods: int = 12
+    random_holdout: bool = False
+    holdout_seed: int = 42
 
     # Normalisation
     scale_spend: bool = True
@@ -269,8 +271,14 @@ class DataProcessor:
         n_test = min(cfg.test_periods, max(1, T - 1))
         train_mask = np.zeros(T, dtype=bool)
         test_mask = np.zeros(T, dtype=bool)
-        train_mask[: T - n_test] = True
-        test_mask[T - n_test :] = True
+        if cfg.random_holdout:
+            rng = np.random.default_rng(cfg.holdout_seed)
+            test_idx = rng.choice(T, size=n_test, replace=False)
+            test_mask[test_idx] = True
+            train_mask = ~test_mask
+        else:
+            train_mask[: T - n_test] = True
+            test_mask[T - n_test :] = True
 
         # Campaign-level spend (optional)
         camp_spend_matrix = None
