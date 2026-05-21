@@ -822,7 +822,20 @@ class BayesianMMM:
         # Flatten parameter tensors once to avoid repeated reshape + Python loops.
         saturation_flat = None
         if cfg.apply_saturation and "saturation" in post:
-            saturation_flat = post["saturation"].values.reshape(-1, 1)
+            saturation_samples = post["saturation"].values
+            # Keep saturation samples aligned with beta_flat rows. Saturation can be
+            # (chains, draws) for static terms or include time/channel dimensions
+            # when those parameters are modeled as dynamic; in those cases collapse
+            # extra axes so each posterior draw maps to a single scalar here.
+            if saturation_samples.ndim == 2:
+                saturation_flat = saturation_samples.reshape(-1, 1)
+            elif saturation_samples.ndim >= 3:
+                reduce_axes = tuple(range(2, saturation_samples.ndim))
+                saturation_flat = saturation_samples.mean(axis=reduce_axes).reshape(-1, 1)
+            else:
+                raise ValueError(
+                    f"Unexpected saturation posterior shape {saturation_samples.shape}; expected at least 2D tensor."
+                )
 
         curves = {}
         for c, ch in enumerate(dataset.channel_names):
