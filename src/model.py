@@ -500,13 +500,16 @@ class BayesianMMM:
     ) -> pt.TensorVariable:
         """Create smooth channel-time betas using Gaussian random walks."""
         ch_to_idx = {name: i for i, name in enumerate(channel_names or [])}
-        tvc_idx = sorted(
-            {
-                ch_to_idx[ch]
-                for ch in (cfg.tvc_channels or [])
-                if ch in ch_to_idx
-            }
-        ) if cfg.tvc_channels else list(range(n_channels))
+        if cfg.tvc_channels is None:
+            tvc_idx = list(range(n_channels))
+        else:
+            tvc_idx = sorted(
+                {
+                    ch_to_idx[ch]
+                    for ch in cfg.tvc_channels
+                    if ch in ch_to_idx
+                }
+            )
         static_idx = [i for i in range(n_channels) if i not in tvc_idx]
 
         beta_sigma = self._resolve_channel_prior_sigma(
