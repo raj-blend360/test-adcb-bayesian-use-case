@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         default=None,
         dest="tvc_channels",
-        help="Optional subset of channels to use time-varying coefficients for (default: all channels).",
+        help="Optional subset of channels for TVC. Pass --tvc-channels None to disable TVC for all channels; omit flag to apply TVC to all channels.",
     )
     p.add_argument(
         "--tvc-frequency",
@@ -162,7 +162,10 @@ def parse_args() -> argparse.Namespace:
         dest="time_granularity",
         help="Input time granularity for modelling. 'auto' infers from date spacing.",
     )
-    return p.parse_args()
+    args = p.parse_args()
+    if args.tvc_channels is not None and any(str(ch).strip().lower() == "none" for ch in args.tvc_channels):
+        args.tvc_channels = []
+    return args
 
 
 # ---------------------------------------------------------------------------
@@ -563,7 +566,7 @@ def step_fit_model(dataset, args) -> "MMMResults":
     print(f"  Saturation         : {'ON (Hill)' if cfg.apply_saturation else 'OFF'}")
     print(f"  Channel halo pairs : {ch_halo_pairs}")
     print(f"  Campaign halo pairs: {camp_halo_pairs}")
-    print(f"  TVC channels        : {args.tvc_channels if args.tvc_channels else 'all'}")
+    print(f"  TVC channels        : {'none' if args.tvc_channels == [] else (args.tvc_channels if args.tvc_channels else 'all')}")
     if channel_beta_prior_sigma:
         print(f"  Channel beta priors : {channel_beta_prior_sigma}")
     if channel_adstock_prior:
@@ -624,8 +627,8 @@ def step_diagnostics(results, args) -> dict:
 
     try:
         oos = out_of_sample_validation(results)
-        print(f"\n  OOS MAPE: {oos['mape']:.2f}%  |  R²: {oos['r2']:.4f}")
-        print(f"  OOS Adj R²: {oos['adj_r2']:.4f}")
+        print(f"\n  OOS MAPE: {oos['mape']:.2f}%  |  OOS WMAPE: {oos['wmape']:.2f}%")
+        print(f"  OOS R²: {oos['r2']:.4f}  |  OOS Adj R²: {oos['adj_r2']:.4f}")
         print(f"  Train WMAPE: {oos['train_wmape']:.2f}%")
         print(f"  Train Adj R²: {oos['train_adj_r2']:.4f}")
     except Exception as e:
