@@ -121,6 +121,13 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--random-holdout", action="store_true", dest="random_holdout",
                    help="Randomly select holdout periods instead of using the most recent periods")
+    p.add_argument(
+        "--out-of-sample",
+        dest="out_of_sample",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable out-of-sample holdout validation. Disable to train on full data.",
+    )
     p.add_argument("--no-plots", dest="no_plots", action="store_true", help="Skip saving plots")
     p.add_argument("--no-bounds", dest="no_bounds", action="store_true", help="Disable ±30%% bounds")
     p.add_argument(
@@ -453,10 +460,12 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     granularity = _resolve_time_granularity(channel_df, args.time_granularity)
     if granularity == "daily":
         seasonality_periods = [180.0,]
-        test_periods = 84  # hold out ~12 weeks
+        default_test_periods = 84  # hold out ~12 weeks
     else:
         seasonality_periods = [52.0, 26.0]
-        test_periods = 12
+        default_test_periods = 12
+
+    test_periods = default_test_periods if args.out_of_sample else 0
 
     cfg = DataConfig(
         spend_col="media_input",
@@ -479,7 +488,10 @@ def step_preprocess(channel_df: pd.DataFrame, campaign_df: pd.DataFrame, args) -
     print(f"  Granularity   : {granularity}")
     print(f"  Train periods : {dataset.train_mask.sum()}")
     print(f"  Test periods  : {dataset.test_mask.sum()}")
-    print(f"  Holdout mode  : {'random' if args.random_holdout else 'last-n'}")
+    if args.out_of_sample and dataset.test_mask.sum() > 0:
+        print(f"  Holdout mode  : {'random' if args.random_holdout else 'last-n'}")
+    else:
+        print("  Holdout mode  : disabled (train on full data)")
     print("  Input metric by channel:")
     for ch in dataset.channel_names:
         print(f"    {ch:<20} {used_inputs.get(ch, 'clicks')}")
