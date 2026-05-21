@@ -201,7 +201,7 @@ def out_of_sample_validation(
     n_channels = dataset.n_channels
 
     # Posterior means
-    beta_mean = np.clip(post["beta"].mean(("chain", "draw")).values, 0.0, None)  # (C,)
+    beta_mean = np.clip(post["beta"].mean(("chain", "draw")).values, 0.0, None)
     base_mean = float(post["base"].mean(("chain", "draw")).values)
 
     gamma_mean = post["saturation"].mean(("chain", "draw")).values if cfg.apply_saturation and "saturation" in post else None
@@ -215,7 +215,37 @@ def out_of_sample_validation(
     spend_full = dataset.spend_matrix
     test_mask = dataset.test_mask
 
-    channel_preds = np.zeros((spend_test.shape[0], n_channels))
+    n_test = spend_test.shape[0]
+    channel_preds = np.zeros((n_test, n_channels))
+
+    if beta_mean.ndim == 1 and beta_mean.shape == (n_channels,):
+        beta_mode = "static"
+    elif beta_mean.ndim == 2 and n_channels in beta_mean.shape:
+        channel_axis = int(np.where(np.asarray(beta_mean.shape) == n_channels)[0][0])
+        beta_tv = np.moveaxis(beta_mean, channel_axis, 1) if channel_axis != 1 else beta_mean
+        if beta_tv.shape[0] == spend_full.shape[0]:
+            beta_test = beta_tv[test_mask]
+        elif beta_tv.shape[0] == n_test:
+            beta_test = beta_tv
+        else:
+            raise ValueError(
+                "Unexpected time-varying beta time dimension in out_of_sample_validation: "
+                f"beta_mean shape={beta_mean.shape}, inferred (time, channel)={beta_tv.shape}, "
+                f"expected time length to equal full horizon ({spend_full.shape[0]}) "
+                f"or test horizon ({n_test})."
+            )
+        if beta_test.shape != (n_test, n_channels):
+            raise ValueError(
+                "Unexpected beta_test shape in out_of_sample_validation: "
+                f"got {beta_test.shape}, expected {(n_test, n_channels)}."
+            )
+        beta_mode = "time_varying"
+    else:
+        raise ValueError(
+            "Unexpected beta_mean shape in out_of_sample_validation: "
+            f"got {beta_mean.shape}, expected static {(n_channels,)} "
+            f"or time-varying with 2 dims including n_channels={n_channels}."
+        )
 
     for c in range(n_channels):
         x_full_raw = spend_full[:, c]
@@ -239,7 +269,10 @@ def out_of_sample_validation(
         else:
             sat = x_ad_test
 
-        channel_preds[:, c] = float(beta_mean[c]) * sat
+        if beta_mode == "static":
+            channel_preds[:, c] = beta_mean[c] * sat
+        else:
+            channel_preds[:, c] = beta_test[:, c] * sat
 
     ctrl_contrib = np.zeros(spend_test.shape[0])
     if gamma_ctrl_mean is not None:
