@@ -234,12 +234,18 @@ def out_of_sample_validation(
             # For OOS scoring, carry forward the final train-period beta vector.
             beta_last = beta_tv[-1, :].reshape(1, -1)
             beta_test = np.repeat(beta_last, n_test, axis=0)
+        elif 1 < beta_tv.shape[0] < int(dataset.train_mask.sum()):
+            # Coarser TVC grids (e.g., tvc_frequency > 1) can produce fewer time points
+            # than the train horizon. For OOS scoring, carry forward the latest estimate.
+            beta_last = beta_tv[-1, :].reshape(1, -1)
+            beta_test = np.repeat(beta_last, n_test, axis=0)
         else:
             raise ValueError(
                 "Unexpected time-varying beta time dimension in out_of_sample_validation: "
                 f"beta_mean shape={beta_mean.shape}, inferred (time, channel)={beta_tv.shape}, "
                 f"expected time length to equal full horizon ({spend_full.shape[0]}) "
-                f"or test horizon ({n_test}) or train horizon ({int(dataset.train_mask.sum())})."
+                f"or test horizon ({n_test}) or train horizon ({int(dataset.train_mask.sum())}), "
+                "or a reduced train-grid when TVC frequency > 1."
             )
         if beta_test.shape != (n_test, n_channels):
             raise ValueError(
