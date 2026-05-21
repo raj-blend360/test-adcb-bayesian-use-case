@@ -180,9 +180,11 @@ def _run_fit(run_id: int, req_dict: dict):
 
         holdout_seed = int(transform_config.get("holdout_seed", req.holdout_seed))
         random_holdout = bool(transform_config.get("random_holdout", req.random_holdout))
+        enable_oos = bool(transform_config.get("enable_oos", True))
+        test_periods = int(transform_config.get("test_weeks", 12)) if enable_oos else 0
         dc = DataConfig(
             include_seasonality=transform_config.get("include_seasonality", True),
-            test_periods=transform_config.get("test_weeks", 12),
+            test_periods=test_periods,
             random_holdout=random_holdout,
             holdout_seed=holdout_seed,
         )
@@ -199,7 +201,7 @@ def _run_fit(run_id: int, req_dict: dict):
 
         # Diagnostics
         conv_df = check_convergence(results)
-        oos_dict = out_of_sample_validation(results)
+        oos_dict = out_of_sample_validation(results) if dataset.test_mask.any() else {}
         diag_df = generate_diagnostic_report(results)
 
         # Contributions

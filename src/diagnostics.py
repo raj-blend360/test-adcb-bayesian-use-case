@@ -216,6 +216,8 @@ def out_of_sample_validation(
     test_mask = dataset.test_mask
 
     n_test = spend_test.shape[0]
+    if n_test == 0:
+        raise ValueError("Out-of-sample validation is disabled because no holdout periods were configured.")
     channel_preds = np.zeros((n_test, n_channels))
 
     if beta_mean.ndim == 1 and beta_mean.shape == (n_channels,):
@@ -227,12 +229,17 @@ def out_of_sample_validation(
             beta_test = beta_tv[test_mask]
         elif beta_tv.shape[0] == n_test:
             beta_test = beta_tv
+        elif beta_tv.shape[0] == int(dataset.train_mask.sum()):
+            # Some model configurations infer time-varying betas only on train periods.
+            # For OOS scoring, carry forward the final train-period beta vector.
+            beta_last = beta_tv[-1, :].reshape(1, -1)
+            beta_test = np.repeat(beta_last, n_test, axis=0)
         else:
             raise ValueError(
                 "Unexpected time-varying beta time dimension in out_of_sample_validation: "
                 f"beta_mean shape={beta_mean.shape}, inferred (time, channel)={beta_tv.shape}, "
                 f"expected time length to equal full horizon ({spend_full.shape[0]}) "
-                f"or test horizon ({n_test})."
+                f"or test horizon ({n_test}) or train horizon ({int(dataset.train_mask.sum())})."
             )
         if beta_test.shape != (n_test, n_channels):
             raise ValueError(

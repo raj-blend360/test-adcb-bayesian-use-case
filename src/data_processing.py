@@ -111,7 +111,7 @@ class DataConfig:
     # Control variables to pass through
     control_cols: list[str] = field(default_factory=lambda: ["holiday_flag", "promo_flag"])
 
-    # Train / test split
+    # Train / test split (set to 0 to disable holdout and train on full data)
     test_periods: int = 12
     random_holdout: bool = False
     holdout_seed: int = 42
@@ -268,10 +268,12 @@ class DataProcessor:
 
         # Train / test split
         T = len(dates)
-        n_test = min(cfg.test_periods, max(1, T - 1))
+        n_test = min(max(int(cfg.test_periods), 0), max(0, T - 1))
         train_mask = np.zeros(T, dtype=bool)
         test_mask = np.zeros(T, dtype=bool)
-        if cfg.random_holdout:
+        if n_test == 0:
+            train_mask[:] = True
+        elif cfg.random_holdout:
             rng = np.random.default_rng(cfg.holdout_seed)
             test_idx = rng.choice(T, size=n_test, replace=False)
             test_mask[test_idx] = True
